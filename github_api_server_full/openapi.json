@@ -1,0 +1,50 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "GitHub Code Update API",
+    "version": "1.0.0",
+    "description": "API для обновления HTML-файла в репозитории GitHub"
+  },
+  "paths": {
+    "/update": {
+      "post": {
+        "summary": "Обновление HTML-файла",
+        "description": "Обновляет содержимое файла index.html в GitHub-репозитории",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "content": {
+                    "type": "string",
+                    "description": "Новый HTML-код"
+                  },
+                  "message": {
+                    "type": "string",
+                    "description": "Описание коммита"
+                  }
+                },
+                "required": [
+                  "content"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Успешное обновление"
+          },
+          "400": {
+            "description": "Ошибка SHA или неправильные данные"
+          },
+          "500": {
+            "description": "Ошибка на стороне сервера"
+          }
+        }
+      }
+    }
+  }
+}
