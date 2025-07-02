@@ -3,1006 +3,1204 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Advanced Microbe Evolution</title>
+  <title>Complex Microbe Evolution</title>
   <style>
     html, body {
       margin: 0;
-      padding: 0;
       height: 100%;
-      overflow: hidden;
-      background: #0f0f1a;
-      color: #f0f0f0;
+      background: #001;
+      color: #eee;
       font-family: Arial, sans-serif;
+      overflow: hidden;
     }
+    canvas { display: block; width: 100%; height: 100%; }
     #ui {
       position: absolute;
       top: 10px;
       left: 10px;
-      padding: 5px 10px;
-      background: rgba(0,0,0,0.5);
+      background: rgba(0,0,0,0.4);
+      padding: 6px 10px;
       border-radius: 4px;
       font-size: 14px;
-      max-width: 50%;
-      line-height: 1.4;
+      pointer-events: none;
     }
-    #help {
-      position: absolute;
-      bottom: 10px;
-      left: 10px;
-      background: rgba(0,0,0,0.5);
-      padding: 4px 8px;
-      border-radius: 4px;
-      font-size: 14px;
-      max-width: 50%;
-      line-height: 1.4;
-    }
-    canvas { display:block; width:100%; height:100%; }
   </style>
 </head>
 <body>
   <canvas id="world"></canvas>
   <div id="ui"></div>
-  <div id="help">WASD/стрелки – движение. Цель: выжить и развиться.</div>
   <script>
     const CONFIG = {
       width: 1200,
       height: 800,
+      initialMicrobes: 20,
+      initialFood: 80,
+      initialToxin: 10,
       foodPerStep: 2,
-      toxinPerStep: 0.05,
-      initialMicrobes: 15,
-      maxFood: 300,
-      maxToxin: 100
+      toxinPerStep: 0.02
     };
+
     const canvas = document.getElementById('world');
     const ctx = canvas.getContext('2d');
+    const ui = document.getElementById('ui');
+    canvas.width = CONFIG.width;
+    canvas.height = CONFIG.height;
     const keys = {};
-    let microbes = [];
-    let foods = [];
-    let toxins = [];
-    let player = null;
-    window.addEventListener('resize', resize);
-    document.addEventListener('keydown', e => keys[e.code] = true);
-    document.addEventListener('keyup', e => keys[e.code] = false);
-    canvas.addEventListener('click', pick);
-    resize();
+    window.addEventListener('keydown', e => keys[e.code] = true);
+    window.addEventListener('keyup', e => keys[e.code] = false);
+
+    class Vector2 {
+      constructor(x=0, y=0){ this.x=x; this.y=y; }
+      add(v){ this.x+=v.x; this.y+=v.y; return this; }
+      sub(v){ this.x-=v.x; this.y-=v.y; return this; }
+      mul(s){ this.x*=s; this.y*=s; return this; }
+      len(){ return Math.hypot(this.x,this.y); }
+      norm(){ const l=this.len(); if(l>0){ this.x/=l; this.y/=l; } return this; }
+      clone(){ return new Vector2(this.x,this.y); }
+    }
+
+    class Food {
+      constructor(x,y){ this.pos=new Vector2(x,y); this.energy=10; }
+      draw(){ ctx.fillStyle='#6f6'; ctx.beginPath(); ctx.arc(this.pos.x,this.pos.y,3,0,Math.PI*2); ctx.fill(); }
+    }
+
+    class Toxin {
+      constructor(x,y){ this.pos=new Vector2(x,y); }
+      draw(){ ctx.fillStyle='#f66'; ctx.beginPath(); ctx.rect(this.pos.x-2,this.pos.y-2,4,4); ctx.fill(); }
+    }
+
     class Microbe {
       constructor(x,y){
-        this.x=x; this.y=y; this.dx=Math.random()*2-1; this.dy=Math.random()*2-1;
-        this.size=5; this.energy=20; this.age=0; this.color=`hsl(${Math.random()*360},70%,60%)`;
+        this.pos = new Vector2(x,y);
+        this.vel = new Vector2(Math.random()*2-1, Math.random()*2-1);
+        this.size = 5;
+        this.energy = 20;
+        this.maxEnergy = 40;
+        this.speed = 1.5;
+        this.color = `hsl(${Math.random()*360},70%,60%)`;
+        this.genes = [];
+        this.age = 0;
       }
       step(){
-        this.x+=this.dx; this.y+=this.dy;
-        if(this.x<0||this.x>canvas.width) this.dx*=-1;
-        if(this.y<0||this.y>canvas.height) this.dy*=-1;
-        this.energy-=0.02; this.age++;
-        for(const f of foods){
-          const d=Math.hypot(this.x-f.x,this.y-f.y);
-          if(d<this.size+3){this.energy+=10;foods.splice(foods.indexOf(f),1);break;}
+        this.pos.add(this.vel.clone().mul(this.speed));
+        if(this.pos.x<0 || this.pos.x>canvas.width) this.vel.x*=-1;
+        if(this.pos.y<0 || this.pos.y>canvas.height) this.vel.y*=-1;
+        this.energy -= 0.03;
+        this.age++;
+        applyGenes(this);
+        if(this.energy > this.maxEnergy){
+          this.energy *= 0.5;
+          const child = new Microbe(this.pos.x+Math.random()*10-5,this.pos.y+Math.random()*10-5);
+          child.genes = mutateGenes(this.genes);
+          microbes.push(child);
         }
-        if(this.energy>40){ this.energy/=2; microbes.push(new Microbe(this.x+Math.random()*20-10,this.y+Math.random()*20-10)); }
       }
-      draw(){ ctx.fillStyle=this.color; ctx.beginPath(); ctx.arc(this.x,this.y,this.size,0,Math.PI*2); ctx.fill(); }
+      draw(){
+        ctx.fillStyle=this.color;
+        ctx.beginPath();
+        ctx.arc(this.pos.x, this.pos.y, this.size, 0, Math.PI*2);
+        ctx.fill();
+      }
     }
-    class Player extends Microbe {
-      constructor(x,y){ super(x,y); this.color='#ff0'; }
+
+    class PlayerMicrobe extends Microbe {
+      constructor(x,y){
+        super(x,y);
+        this.color = '#ff0';
+      }
       step(){
-        if(keys['KeyW']||keys['ArrowUp']) this.dy-=0.1;
-        if(keys['KeyS']||keys['ArrowDown']) this.dy+=0.1;
-        if(keys['KeyA']||keys['ArrowLeft']) this.dx-=0.1;
-        if(keys['KeyD']||keys['ArrowRight']) this.dx+=0.1;
+        if(keys['KeyW'] || keys['ArrowUp']) this.vel.y -= 0.1;
+        if(keys['KeyS'] || keys['ArrowDown']) this.vel.y += 0.1;
+        if(keys['KeyA'] || keys['ArrowLeft']) this.vel.x -= 0.1;
+        if(keys['KeyD'] || keys['ArrowRight']) this.vel.x += 0.1;
         super.step();
       }
     }
-    function spawnFood(){ foods.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height}); }
-    function spawnToxin(){ toxins.push({x:Math.random()*canvas.width,y:Math.random()*canvas.height}); }
-    function pick(e){ const r=canvas.getBoundingClientRect(); const x=e.clientX-r.left; const y=e.clientY-r.top; }
-    function resize(){ canvas.width=CONFIG.width; canvas.height=CONFIG.height; }
+
+    function mutateGenes(genes){
+      const mutated = genes.slice();
+      if(Math.random()<0.1 && mutated.length < GENE_FUNCS.length){
+        mutated.push(GENE_FUNCS[Math.floor(Math.random()*GENE_FUNCS.length)]);
+      }
+      if(mutated.length>0 && Math.random()<0.05) mutated.splice(Math.floor(Math.random()*mutated.length),1);
+      return mutated;
+    }
+
+    function applyGenes(m){
+      for(const g of m.genes){ g(m); }
+    }
+
+    const microbes = [];
+    const foods = [];
+    const toxins = [];
+    let player = null;
+
+    function spawnFood(){
+      foods.push(new Food(Math.random()*canvas.width, Math.random()*canvas.height));
+    }
+    function spawnToxin(){
+      toxins.push(new Toxin(Math.random()*canvas.width, Math.random()*canvas.height));
+    }
+
     function init(){
-      microbes=[]; foods=[]; toxins=[];
-      player=new Player(CONFIG.width/2,CONFIG.height/2); microbes.push(player);
-      for(let i=0;i<CONFIG.initialMicrobes;i++) microbes.push(new Microbe(Math.random()*CONFIG.width,Math.random()*CONFIG.height));
-      for(let i=0;i<50;i++) spawnFood();
+      microbes.length=0; foods.length=0; toxins.length=0;
+      for(let i=0;i<CONFIG.initialMicrobes;i++) microbes.push(new Microbe(Math.random()*canvas.width, Math.random()*canvas.height));
+      player = new PlayerMicrobe(canvas.width/2, canvas.height/2);
+      microbes.push(player);
+      for(let i=0;i<CONFIG.initialFood;i++) spawnFood();
+      for(let i=0;i<CONFIG.initialToxin;i++) spawnToxin();
     }
+
+    function update(){
+      if(Math.random()<CONFIG.foodPerStep) spawnFood();
+      if(Math.random()<CONFIG.toxinPerStep) spawnToxin();
+      for(const m of microbes){ m.step(); }
+      for(const m of microbes){
+        for(const f of foods){
+          const d = Math.hypot(m.pos.x - f.pos.x, m.pos.y - f.pos.y);
+          if(d < m.size + 3){ m.energy += f.energy; foods.splice(foods.indexOf(f),1); break; }
+        }
+        for(const t of toxins){
+          const d = Math.hypot(m.pos.x - t.pos.x, m.pos.y - t.pos.y);
+          if(d < m.size + 3){ m.energy -= 5; toxins.splice(toxins.indexOf(t),1); break; }
+        }
+      }
+      for(let i=microbes.length-1;i>=0;i--){ if(microbes[i].energy <= 0) microbes.splice(i,1); }
+    }
+
     function draw(){
-      ctx.fillStyle='#0f0f1a'; ctx.fillRect(0,0,canvas.width,canvas.height);
-      for(const f of foods){ ctx.fillStyle='#6ff'; ctx.beginPath(); ctx.arc(f.x,f.y,2,0,Math.PI*2); ctx.fill(); }
-      for(const m of microbes){ m.step(); m.draw(); }
-      document.getElementById('ui').textContent=`Микробов: ${microbes.length} | Энергия: ${player.energy.toFixed(1)}`;
-      requestAnimationFrame(draw);
+      ctx.fillStyle='#001';
+      ctx.fillRect(0,0,canvas.width,canvas.height);
+      for(const f of foods) f.draw();
+      for(const t of toxins) t.draw();
+      for(const m of microbes) m.draw();
+      ui.textContent = `Микробы: ${microbes.length} | Еда: ${foods.length} | Токсины: ${toxins.length} | Энергия игрока: ${player.energy.toFixed(1)}`;
     }
-    init(); draw();
+
+    function loop(){
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+
+    init();
+    loop();
+
+const GENE_FUNCS = [];
+    // -- gene definitions below (generated for complexity) --
+function gene001(m){ m.speed+=0.001*001; m.maxEnergy+=0.01*001; }
+GENE_FUNCS.push(gene001);
+function gene002(m){ m.speed+=0.001*002; m.maxEnergy+=0.01*002; }
+GENE_FUNCS.push(gene002);
+function gene003(m){ m.speed+=0.001*003; m.maxEnergy+=0.01*003; }
+GENE_FUNCS.push(gene003);
+function gene004(m){ m.speed+=0.001*004; m.maxEnergy+=0.01*004; }
+GENE_FUNCS.push(gene004);
+function gene005(m){ m.speed+=0.001*005; m.maxEnergy+=0.01*005; }
+GENE_FUNCS.push(gene005);
+function gene006(m){ m.speed+=0.001*006; m.maxEnergy+=0.01*006; }
+GENE_FUNCS.push(gene006);
+function gene007(m){ m.speed+=0.001*007; m.maxEnergy+=0.01*007; }
+GENE_FUNCS.push(gene007);
+function gene008(m){ m.speed+=0.001*008; m.maxEnergy+=0.01*008; }
+GENE_FUNCS.push(gene008);
+function gene009(m){ m.speed+=0.001*009; m.maxEnergy+=0.01*009; }
+GENE_FUNCS.push(gene009);
+function gene010(m){ m.speed+=0.001*010; m.maxEnergy+=0.01*010; }
+GENE_FUNCS.push(gene010);
+function gene011(m){ m.speed+=0.001*011; m.maxEnergy+=0.01*011; }
+GENE_FUNCS.push(gene011);
+function gene012(m){ m.speed+=0.001*012; m.maxEnergy+=0.01*012; }
+GENE_FUNCS.push(gene012);
+function gene013(m){ m.speed+=0.001*013; m.maxEnergy+=0.01*013; }
+GENE_FUNCS.push(gene013);
+function gene014(m){ m.speed+=0.001*014; m.maxEnergy+=0.01*014; }
+GENE_FUNCS.push(gene014);
+function gene015(m){ m.speed+=0.001*015; m.maxEnergy+=0.01*015; }
+GENE_FUNCS.push(gene015);
+function gene016(m){ m.speed+=0.001*016; m.maxEnergy+=0.01*016; }
+GENE_FUNCS.push(gene016);
+function gene017(m){ m.speed+=0.001*017; m.maxEnergy+=0.01*017; }
+GENE_FUNCS.push(gene017);
+function gene018(m){ m.speed+=0.001*018; m.maxEnergy+=0.01*018; }
+GENE_FUNCS.push(gene018);
+function gene019(m){ m.speed+=0.001*019; m.maxEnergy+=0.01*019; }
+GENE_FUNCS.push(gene019);
+function gene020(m){ m.speed+=0.001*020; m.maxEnergy+=0.01*020; }
+GENE_FUNCS.push(gene020);
+function gene021(m){ m.speed+=0.001*021; m.maxEnergy+=0.01*021; }
+GENE_FUNCS.push(gene021);
+function gene022(m){ m.speed+=0.001*022; m.maxEnergy+=0.01*022; }
+GENE_FUNCS.push(gene022);
+function gene023(m){ m.speed+=0.001*023; m.maxEnergy+=0.01*023; }
+GENE_FUNCS.push(gene023);
+function gene024(m){ m.speed+=0.001*024; m.maxEnergy+=0.01*024; }
+GENE_FUNCS.push(gene024);
+function gene025(m){ m.speed+=0.001*025; m.maxEnergy+=0.01*025; }
+GENE_FUNCS.push(gene025);
+function gene026(m){ m.speed+=0.001*026; m.maxEnergy+=0.01*026; }
+GENE_FUNCS.push(gene026);
+function gene027(m){ m.speed+=0.001*027; m.maxEnergy+=0.01*027; }
+GENE_FUNCS.push(gene027);
+function gene028(m){ m.speed+=0.001*028; m.maxEnergy+=0.01*028; }
+GENE_FUNCS.push(gene028);
+function gene029(m){ m.speed+=0.001*029; m.maxEnergy+=0.01*029; }
+GENE_FUNCS.push(gene029);
+function gene030(m){ m.speed+=0.001*030; m.maxEnergy+=0.01*030; }
+GENE_FUNCS.push(gene030);
+function gene031(m){ m.speed+=0.001*031; m.maxEnergy+=0.01*031; }
+GENE_FUNCS.push(gene031);
+function gene032(m){ m.speed+=0.001*032; m.maxEnergy+=0.01*032; }
+GENE_FUNCS.push(gene032);
+function gene033(m){ m.speed+=0.001*033; m.maxEnergy+=0.01*033; }
+GENE_FUNCS.push(gene033);
+function gene034(m){ m.speed+=0.001*034; m.maxEnergy+=0.01*034; }
+GENE_FUNCS.push(gene034);
+function gene035(m){ m.speed+=0.001*035; m.maxEnergy+=0.01*035; }
+GENE_FUNCS.push(gene035);
+function gene036(m){ m.speed+=0.001*036; m.maxEnergy+=0.01*036; }
+GENE_FUNCS.push(gene036);
+function gene037(m){ m.speed+=0.001*037; m.maxEnergy+=0.01*037; }
+GENE_FUNCS.push(gene037);
+function gene038(m){ m.speed+=0.001*038; m.maxEnergy+=0.01*038; }
+GENE_FUNCS.push(gene038);
+function gene039(m){ m.speed+=0.001*039; m.maxEnergy+=0.01*039; }
+GENE_FUNCS.push(gene039);
+function gene040(m){ m.speed+=0.001*040; m.maxEnergy+=0.01*040; }
+GENE_FUNCS.push(gene040);
+function gene041(m){ m.speed+=0.001*041; m.maxEnergy+=0.01*041; }
+GENE_FUNCS.push(gene041);
+function gene042(m){ m.speed+=0.001*042; m.maxEnergy+=0.01*042; }
+GENE_FUNCS.push(gene042);
+function gene043(m){ m.speed+=0.001*043; m.maxEnergy+=0.01*043; }
+GENE_FUNCS.push(gene043);
+function gene044(m){ m.speed+=0.001*044; m.maxEnergy+=0.01*044; }
+GENE_FUNCS.push(gene044);
+function gene045(m){ m.speed+=0.001*045; m.maxEnergy+=0.01*045; }
+GENE_FUNCS.push(gene045);
+function gene046(m){ m.speed+=0.001*046; m.maxEnergy+=0.01*046; }
+GENE_FUNCS.push(gene046);
+function gene047(m){ m.speed+=0.001*047; m.maxEnergy+=0.01*047; }
+GENE_FUNCS.push(gene047);
+function gene048(m){ m.speed+=0.001*048; m.maxEnergy+=0.01*048; }
+GENE_FUNCS.push(gene048);
+function gene049(m){ m.speed+=0.001*049; m.maxEnergy+=0.01*049; }
+GENE_FUNCS.push(gene049);
+function gene050(m){ m.speed+=0.001*050; m.maxEnergy+=0.01*050; }
+GENE_FUNCS.push(gene050);
+function gene051(m){ m.speed+=0.001*051; m.maxEnergy+=0.01*051; }
+GENE_FUNCS.push(gene051);
+function gene052(m){ m.speed+=0.001*052; m.maxEnergy+=0.01*052; }
+GENE_FUNCS.push(gene052);
+function gene053(m){ m.speed+=0.001*053; m.maxEnergy+=0.01*053; }
+GENE_FUNCS.push(gene053);
+function gene054(m){ m.speed+=0.001*054; m.maxEnergy+=0.01*054; }
+GENE_FUNCS.push(gene054);
+function gene055(m){ m.speed+=0.001*055; m.maxEnergy+=0.01*055; }
+GENE_FUNCS.push(gene055);
+function gene056(m){ m.speed+=0.001*056; m.maxEnergy+=0.01*056; }
+GENE_FUNCS.push(gene056);
+function gene057(m){ m.speed+=0.001*057; m.maxEnergy+=0.01*057; }
+GENE_FUNCS.push(gene057);
+function gene058(m){ m.speed+=0.001*058; m.maxEnergy+=0.01*058; }
+GENE_FUNCS.push(gene058);
+function gene059(m){ m.speed+=0.001*059; m.maxEnergy+=0.01*059; }
+GENE_FUNCS.push(gene059);
+function gene060(m){ m.speed+=0.001*060; m.maxEnergy+=0.01*060; }
+GENE_FUNCS.push(gene060);
+function gene061(m){ m.speed+=0.001*061; m.maxEnergy+=0.01*061; }
+GENE_FUNCS.push(gene061);
+function gene062(m){ m.speed+=0.001*062; m.maxEnergy+=0.01*062; }
+GENE_FUNCS.push(gene062);
+function gene063(m){ m.speed+=0.001*063; m.maxEnergy+=0.01*063; }
+GENE_FUNCS.push(gene063);
+function gene064(m){ m.speed+=0.001*064; m.maxEnergy+=0.01*064; }
+GENE_FUNCS.push(gene064);
+function gene065(m){ m.speed+=0.001*065; m.maxEnergy+=0.01*065; }
+GENE_FUNCS.push(gene065);
+function gene066(m){ m.speed+=0.001*066; m.maxEnergy+=0.01*066; }
+GENE_FUNCS.push(gene066);
+function gene067(m){ m.speed+=0.001*067; m.maxEnergy+=0.01*067; }
+GENE_FUNCS.push(gene067);
+function gene068(m){ m.speed+=0.001*068; m.maxEnergy+=0.01*068; }
+GENE_FUNCS.push(gene068);
+function gene069(m){ m.speed+=0.001*069; m.maxEnergy+=0.01*069; }
+GENE_FUNCS.push(gene069);
+function gene070(m){ m.speed+=0.001*070; m.maxEnergy+=0.01*070; }
+GENE_FUNCS.push(gene070);
+function gene071(m){ m.speed+=0.001*071; m.maxEnergy+=0.01*071; }
+GENE_FUNCS.push(gene071);
+function gene072(m){ m.speed+=0.001*072; m.maxEnergy+=0.01*072; }
+GENE_FUNCS.push(gene072);
+function gene073(m){ m.speed+=0.001*073; m.maxEnergy+=0.01*073; }
+GENE_FUNCS.push(gene073);
+function gene074(m){ m.speed+=0.001*074; m.maxEnergy+=0.01*074; }
+GENE_FUNCS.push(gene074);
+function gene075(m){ m.speed+=0.001*075; m.maxEnergy+=0.01*075; }
+GENE_FUNCS.push(gene075);
+function gene076(m){ m.speed+=0.001*076; m.maxEnergy+=0.01*076; }
+GENE_FUNCS.push(gene076);
+function gene077(m){ m.speed+=0.001*077; m.maxEnergy+=0.01*077; }
+GENE_FUNCS.push(gene077);
+function gene078(m){ m.speed+=0.001*078; m.maxEnergy+=0.01*078; }
+GENE_FUNCS.push(gene078);
+function gene079(m){ m.speed+=0.001*079; m.maxEnergy+=0.01*079; }
+GENE_FUNCS.push(gene079);
+function gene080(m){ m.speed+=0.001*080; m.maxEnergy+=0.01*080; }
+GENE_FUNCS.push(gene080);
+function gene081(m){ m.speed+=0.001*081; m.maxEnergy+=0.01*081; }
+GENE_FUNCS.push(gene081);
+function gene082(m){ m.speed+=0.001*082; m.maxEnergy+=0.01*082; }
+GENE_FUNCS.push(gene082);
+function gene083(m){ m.speed+=0.001*083; m.maxEnergy+=0.01*083; }
+GENE_FUNCS.push(gene083);
+function gene084(m){ m.speed+=0.001*084; m.maxEnergy+=0.01*084; }
+GENE_FUNCS.push(gene084);
+function gene085(m){ m.speed+=0.001*085; m.maxEnergy+=0.01*085; }
+GENE_FUNCS.push(gene085);
+function gene086(m){ m.speed+=0.001*086; m.maxEnergy+=0.01*086; }
+GENE_FUNCS.push(gene086);
+function gene087(m){ m.speed+=0.001*087; m.maxEnergy+=0.01*087; }
+GENE_FUNCS.push(gene087);
+function gene088(m){ m.speed+=0.001*088; m.maxEnergy+=0.01*088; }
+GENE_FUNCS.push(gene088);
+function gene089(m){ m.speed+=0.001*089; m.maxEnergy+=0.01*089; }
+GENE_FUNCS.push(gene089);
+function gene090(m){ m.speed+=0.001*090; m.maxEnergy+=0.01*090; }
+GENE_FUNCS.push(gene090);
+function gene091(m){ m.speed+=0.001*091; m.maxEnergy+=0.01*091; }
+GENE_FUNCS.push(gene091);
+function gene092(m){ m.speed+=0.001*092; m.maxEnergy+=0.01*092; }
+GENE_FUNCS.push(gene092);
+function gene093(m){ m.speed+=0.001*093; m.maxEnergy+=0.01*093; }
+GENE_FUNCS.push(gene093);
+function gene094(m){ m.speed+=0.001*094; m.maxEnergy+=0.01*094; }
+GENE_FUNCS.push(gene094);
+function gene095(m){ m.speed+=0.001*095; m.maxEnergy+=0.01*095; }
+GENE_FUNCS.push(gene095);
+function gene096(m){ m.speed+=0.001*096; m.maxEnergy+=0.01*096; }
+GENE_FUNCS.push(gene096);
+function gene097(m){ m.speed+=0.001*097; m.maxEnergy+=0.01*097; }
+GENE_FUNCS.push(gene097);
+function gene098(m){ m.speed+=0.001*098; m.maxEnergy+=0.01*098; }
+GENE_FUNCS.push(gene098);
+function gene099(m){ m.speed+=0.001*099; m.maxEnergy+=0.01*099; }
+GENE_FUNCS.push(gene099);
+function gene100(m){ m.speed+=0.001*100; m.maxEnergy+=0.01*100; }
+GENE_FUNCS.push(gene100);
+function gene101(m){ m.speed+=0.001*101; m.maxEnergy+=0.01*101; }
+GENE_FUNCS.push(gene101);
+function gene102(m){ m.speed+=0.001*102; m.maxEnergy+=0.01*102; }
+GENE_FUNCS.push(gene102);
+function gene103(m){ m.speed+=0.001*103; m.maxEnergy+=0.01*103; }
+GENE_FUNCS.push(gene103);
+function gene104(m){ m.speed+=0.001*104; m.maxEnergy+=0.01*104; }
+GENE_FUNCS.push(gene104);
+function gene105(m){ m.speed+=0.001*105; m.maxEnergy+=0.01*105; }
+GENE_FUNCS.push(gene105);
+function gene106(m){ m.speed+=0.001*106; m.maxEnergy+=0.01*106; }
+GENE_FUNCS.push(gene106);
+function gene107(m){ m.speed+=0.001*107; m.maxEnergy+=0.01*107; }
+GENE_FUNCS.push(gene107);
+function gene108(m){ m.speed+=0.001*108; m.maxEnergy+=0.01*108; }
+GENE_FUNCS.push(gene108);
+function gene109(m){ m.speed+=0.001*109; m.maxEnergy+=0.01*109; }
+GENE_FUNCS.push(gene109);
+function gene110(m){ m.speed+=0.001*110; m.maxEnergy+=0.01*110; }
+GENE_FUNCS.push(gene110);
+function gene111(m){ m.speed+=0.001*111; m.maxEnergy+=0.01*111; }
+GENE_FUNCS.push(gene111);
+function gene112(m){ m.speed+=0.001*112; m.maxEnergy+=0.01*112; }
+GENE_FUNCS.push(gene112);
+function gene113(m){ m.speed+=0.001*113; m.maxEnergy+=0.01*113; }
+GENE_FUNCS.push(gene113);
+function gene114(m){ m.speed+=0.001*114; m.maxEnergy+=0.01*114; }
+GENE_FUNCS.push(gene114);
+function gene115(m){ m.speed+=0.001*115; m.maxEnergy+=0.01*115; }
+GENE_FUNCS.push(gene115);
+function gene116(m){ m.speed+=0.001*116; m.maxEnergy+=0.01*116; }
+GENE_FUNCS.push(gene116);
+function gene117(m){ m.speed+=0.001*117; m.maxEnergy+=0.01*117; }
+GENE_FUNCS.push(gene117);
+function gene118(m){ m.speed+=0.001*118; m.maxEnergy+=0.01*118; }
+GENE_FUNCS.push(gene118);
+function gene119(m){ m.speed+=0.001*119; m.maxEnergy+=0.01*119; }
+GENE_FUNCS.push(gene119);
+function gene120(m){ m.speed+=0.001*120; m.maxEnergy+=0.01*120; }
+GENE_FUNCS.push(gene120);
+function gene121(m){ m.speed+=0.001*121; m.maxEnergy+=0.01*121; }
+GENE_FUNCS.push(gene121);
+function gene122(m){ m.speed+=0.001*122; m.maxEnergy+=0.01*122; }
+GENE_FUNCS.push(gene122);
+function gene123(m){ m.speed+=0.001*123; m.maxEnergy+=0.01*123; }
+GENE_FUNCS.push(gene123);
+function gene124(m){ m.speed+=0.001*124; m.maxEnergy+=0.01*124; }
+GENE_FUNCS.push(gene124);
+function gene125(m){ m.speed+=0.001*125; m.maxEnergy+=0.01*125; }
+GENE_FUNCS.push(gene125);
+function gene126(m){ m.speed+=0.001*126; m.maxEnergy+=0.01*126; }
+GENE_FUNCS.push(gene126);
+function gene127(m){ m.speed+=0.001*127; m.maxEnergy+=0.01*127; }
+GENE_FUNCS.push(gene127);
+function gene128(m){ m.speed+=0.001*128; m.maxEnergy+=0.01*128; }
+GENE_FUNCS.push(gene128);
+function gene129(m){ m.speed+=0.001*129; m.maxEnergy+=0.01*129; }
+GENE_FUNCS.push(gene129);
+function gene130(m){ m.speed+=0.001*130; m.maxEnergy+=0.01*130; }
+GENE_FUNCS.push(gene130);
+function gene131(m){ m.speed+=0.001*131; m.maxEnergy+=0.01*131; }
+GENE_FUNCS.push(gene131);
+function gene132(m){ m.speed+=0.001*132; m.maxEnergy+=0.01*132; }
+GENE_FUNCS.push(gene132);
+function gene133(m){ m.speed+=0.001*133; m.maxEnergy+=0.01*133; }
+GENE_FUNCS.push(gene133);
+function gene134(m){ m.speed+=0.001*134; m.maxEnergy+=0.01*134; }
+GENE_FUNCS.push(gene134);
+function gene135(m){ m.speed+=0.001*135; m.maxEnergy+=0.01*135; }
+GENE_FUNCS.push(gene135);
+function gene136(m){ m.speed+=0.001*136; m.maxEnergy+=0.01*136; }
+GENE_FUNCS.push(gene136);
+function gene137(m){ m.speed+=0.001*137; m.maxEnergy+=0.01*137; }
+GENE_FUNCS.push(gene137);
+function gene138(m){ m.speed+=0.001*138; m.maxEnergy+=0.01*138; }
+GENE_FUNCS.push(gene138);
+function gene139(m){ m.speed+=0.001*139; m.maxEnergy+=0.01*139; }
+GENE_FUNCS.push(gene139);
+function gene140(m){ m.speed+=0.001*140; m.maxEnergy+=0.01*140; }
+GENE_FUNCS.push(gene140);
+function gene141(m){ m.speed+=0.001*141; m.maxEnergy+=0.01*141; }
+GENE_FUNCS.push(gene141);
+function gene142(m){ m.speed+=0.001*142; m.maxEnergy+=0.01*142; }
+GENE_FUNCS.push(gene142);
+function gene143(m){ m.speed+=0.001*143; m.maxEnergy+=0.01*143; }
+GENE_FUNCS.push(gene143);
+function gene144(m){ m.speed+=0.001*144; m.maxEnergy+=0.01*144; }
+GENE_FUNCS.push(gene144);
+function gene145(m){ m.speed+=0.001*145; m.maxEnergy+=0.01*145; }
+GENE_FUNCS.push(gene145);
+function gene146(m){ m.speed+=0.001*146; m.maxEnergy+=0.01*146; }
+GENE_FUNCS.push(gene146);
+function gene147(m){ m.speed+=0.001*147; m.maxEnergy+=0.01*147; }
+GENE_FUNCS.push(gene147);
+function gene148(m){ m.speed+=0.001*148; m.maxEnergy+=0.01*148; }
+GENE_FUNCS.push(gene148);
+function gene149(m){ m.speed+=0.001*149; m.maxEnergy+=0.01*149; }
+GENE_FUNCS.push(gene149);
+function gene150(m){ m.speed+=0.001*150; m.maxEnergy+=0.01*150; }
+GENE_FUNCS.push(gene150);
+function gene151(m){ m.speed+=0.001*151; m.maxEnergy+=0.01*151; }
+GENE_FUNCS.push(gene151);
+function gene152(m){ m.speed+=0.001*152; m.maxEnergy+=0.01*152; }
+GENE_FUNCS.push(gene152);
+function gene153(m){ m.speed+=0.001*153; m.maxEnergy+=0.01*153; }
+GENE_FUNCS.push(gene153);
+function gene154(m){ m.speed+=0.001*154; m.maxEnergy+=0.01*154; }
+GENE_FUNCS.push(gene154);
+function gene155(m){ m.speed+=0.001*155; m.maxEnergy+=0.01*155; }
+GENE_FUNCS.push(gene155);
+function gene156(m){ m.speed+=0.001*156; m.maxEnergy+=0.01*156; }
+GENE_FUNCS.push(gene156);
+function gene157(m){ m.speed+=0.001*157; m.maxEnergy+=0.01*157; }
+GENE_FUNCS.push(gene157);
+function gene158(m){ m.speed+=0.001*158; m.maxEnergy+=0.01*158; }
+GENE_FUNCS.push(gene158);
+function gene159(m){ m.speed+=0.001*159; m.maxEnergy+=0.01*159; }
+GENE_FUNCS.push(gene159);
+function gene160(m){ m.speed+=0.001*160; m.maxEnergy+=0.01*160; }
+GENE_FUNCS.push(gene160);
+function gene161(m){ m.speed+=0.001*161; m.maxEnergy+=0.01*161; }
+GENE_FUNCS.push(gene161);
+function gene162(m){ m.speed+=0.001*162; m.maxEnergy+=0.01*162; }
+GENE_FUNCS.push(gene162);
+function gene163(m){ m.speed+=0.001*163; m.maxEnergy+=0.01*163; }
+GENE_FUNCS.push(gene163);
+function gene164(m){ m.speed+=0.001*164; m.maxEnergy+=0.01*164; }
+GENE_FUNCS.push(gene164);
+function gene165(m){ m.speed+=0.001*165; m.maxEnergy+=0.01*165; }
+GENE_FUNCS.push(gene165);
+function gene166(m){ m.speed+=0.001*166; m.maxEnergy+=0.01*166; }
+GENE_FUNCS.push(gene166);
+function gene167(m){ m.speed+=0.001*167; m.maxEnergy+=0.01*167; }
+GENE_FUNCS.push(gene167);
+function gene168(m){ m.speed+=0.001*168; m.maxEnergy+=0.01*168; }
+GENE_FUNCS.push(gene168);
+function gene169(m){ m.speed+=0.001*169; m.maxEnergy+=0.01*169; }
+GENE_FUNCS.push(gene169);
+function gene170(m){ m.speed+=0.001*170; m.maxEnergy+=0.01*170; }
+GENE_FUNCS.push(gene170);
+function gene171(m){ m.speed+=0.001*171; m.maxEnergy+=0.01*171; }
+GENE_FUNCS.push(gene171);
+function gene172(m){ m.speed+=0.001*172; m.maxEnergy+=0.01*172; }
+GENE_FUNCS.push(gene172);
+function gene173(m){ m.speed+=0.001*173; m.maxEnergy+=0.01*173; }
+GENE_FUNCS.push(gene173);
+function gene174(m){ m.speed+=0.001*174; m.maxEnergy+=0.01*174; }
+GENE_FUNCS.push(gene174);
+function gene175(m){ m.speed+=0.001*175; m.maxEnergy+=0.01*175; }
+GENE_FUNCS.push(gene175);
+function gene176(m){ m.speed+=0.001*176; m.maxEnergy+=0.01*176; }
+GENE_FUNCS.push(gene176);
+function gene177(m){ m.speed+=0.001*177; m.maxEnergy+=0.01*177; }
+GENE_FUNCS.push(gene177);
+function gene178(m){ m.speed+=0.001*178; m.maxEnergy+=0.01*178; }
+GENE_FUNCS.push(gene178);
+function gene179(m){ m.speed+=0.001*179; m.maxEnergy+=0.01*179; }
+GENE_FUNCS.push(gene179);
+function gene180(m){ m.speed+=0.001*180; m.maxEnergy+=0.01*180; }
+GENE_FUNCS.push(gene180);
+function gene181(m){ m.speed+=0.001*181; m.maxEnergy+=0.01*181; }
+GENE_FUNCS.push(gene181);
+function gene182(m){ m.speed+=0.001*182; m.maxEnergy+=0.01*182; }
+GENE_FUNCS.push(gene182);
+function gene183(m){ m.speed+=0.001*183; m.maxEnergy+=0.01*183; }
+GENE_FUNCS.push(gene183);
+function gene184(m){ m.speed+=0.001*184; m.maxEnergy+=0.01*184; }
+GENE_FUNCS.push(gene184);
+function gene185(m){ m.speed+=0.001*185; m.maxEnergy+=0.01*185; }
+GENE_FUNCS.push(gene185);
+function gene186(m){ m.speed+=0.001*186; m.maxEnergy+=0.01*186; }
+GENE_FUNCS.push(gene186);
+function gene187(m){ m.speed+=0.001*187; m.maxEnergy+=0.01*187; }
+GENE_FUNCS.push(gene187);
+function gene188(m){ m.speed+=0.001*188; m.maxEnergy+=0.01*188; }
+GENE_FUNCS.push(gene188);
+function gene189(m){ m.speed+=0.001*189; m.maxEnergy+=0.01*189; }
+GENE_FUNCS.push(gene189);
+function gene190(m){ m.speed+=0.001*190; m.maxEnergy+=0.01*190; }
+GENE_FUNCS.push(gene190);
+function gene191(m){ m.speed+=0.001*191; m.maxEnergy+=0.01*191; }
+GENE_FUNCS.push(gene191);
+function gene192(m){ m.speed+=0.001*192; m.maxEnergy+=0.01*192; }
+GENE_FUNCS.push(gene192);
+function gene193(m){ m.speed+=0.001*193; m.maxEnergy+=0.01*193; }
+GENE_FUNCS.push(gene193);
+function gene194(m){ m.speed+=0.001*194; m.maxEnergy+=0.01*194; }
+GENE_FUNCS.push(gene194);
+function gene195(m){ m.speed+=0.001*195; m.maxEnergy+=0.01*195; }
+GENE_FUNCS.push(gene195);
+function gene196(m){ m.speed+=0.001*196; m.maxEnergy+=0.01*196; }
+GENE_FUNCS.push(gene196);
+function gene197(m){ m.speed+=0.001*197; m.maxEnergy+=0.01*197; }
+GENE_FUNCS.push(gene197);
+function gene198(m){ m.speed+=0.001*198; m.maxEnergy+=0.01*198; }
+GENE_FUNCS.push(gene198);
+function gene199(m){ m.speed+=0.001*199; m.maxEnergy+=0.01*199; }
+GENE_FUNCS.push(gene199);
+function gene200(m){ m.speed+=0.001*200; m.maxEnergy+=0.01*200; }
+GENE_FUNCS.push(gene200);
+function gene201(m){ m.speed+=0.001*201; m.maxEnergy+=0.01*201; }
+GENE_FUNCS.push(gene201);
+function gene202(m){ m.speed+=0.001*202; m.maxEnergy+=0.01*202; }
+GENE_FUNCS.push(gene202);
+function gene203(m){ m.speed+=0.001*203; m.maxEnergy+=0.01*203; }
+GENE_FUNCS.push(gene203);
+function gene204(m){ m.speed+=0.001*204; m.maxEnergy+=0.01*204; }
+GENE_FUNCS.push(gene204);
+function gene205(m){ m.speed+=0.001*205; m.maxEnergy+=0.01*205; }
+GENE_FUNCS.push(gene205);
+function gene206(m){ m.speed+=0.001*206; m.maxEnergy+=0.01*206; }
+GENE_FUNCS.push(gene206);
+function gene207(m){ m.speed+=0.001*207; m.maxEnergy+=0.01*207; }
+GENE_FUNCS.push(gene207);
+function gene208(m){ m.speed+=0.001*208; m.maxEnergy+=0.01*208; }
+GENE_FUNCS.push(gene208);
+function gene209(m){ m.speed+=0.001*209; m.maxEnergy+=0.01*209; }
+GENE_FUNCS.push(gene209);
+function gene210(m){ m.speed+=0.001*210; m.maxEnergy+=0.01*210; }
+GENE_FUNCS.push(gene210);
+function gene211(m){ m.speed+=0.001*211; m.maxEnergy+=0.01*211; }
+GENE_FUNCS.push(gene211);
+function gene212(m){ m.speed+=0.001*212; m.maxEnergy+=0.01*212; }
+GENE_FUNCS.push(gene212);
+function gene213(m){ m.speed+=0.001*213; m.maxEnergy+=0.01*213; }
+GENE_FUNCS.push(gene213);
+function gene214(m){ m.speed+=0.001*214; m.maxEnergy+=0.01*214; }
+GENE_FUNCS.push(gene214);
+function gene215(m){ m.speed+=0.001*215; m.maxEnergy+=0.01*215; }
+GENE_FUNCS.push(gene215);
+function gene216(m){ m.speed+=0.001*216; m.maxEnergy+=0.01*216; }
+GENE_FUNCS.push(gene216);
+function gene217(m){ m.speed+=0.001*217; m.maxEnergy+=0.01*217; }
+GENE_FUNCS.push(gene217);
+function gene218(m){ m.speed+=0.001*218; m.maxEnergy+=0.01*218; }
+GENE_FUNCS.push(gene218);
+function gene219(m){ m.speed+=0.001*219; m.maxEnergy+=0.01*219; }
+GENE_FUNCS.push(gene219);
+function gene220(m){ m.speed+=0.001*220; m.maxEnergy+=0.01*220; }
+GENE_FUNCS.push(gene220);
+function gene221(m){ m.speed+=0.001*221; m.maxEnergy+=0.01*221; }
+GENE_FUNCS.push(gene221);
+function gene222(m){ m.speed+=0.001*222; m.maxEnergy+=0.01*222; }
+GENE_FUNCS.push(gene222);
+function gene223(m){ m.speed+=0.001*223; m.maxEnergy+=0.01*223; }
+GENE_FUNCS.push(gene223);
+function gene224(m){ m.speed+=0.001*224; m.maxEnergy+=0.01*224; }
+GENE_FUNCS.push(gene224);
+function gene225(m){ m.speed+=0.001*225; m.maxEnergy+=0.01*225; }
+GENE_FUNCS.push(gene225);
+function gene226(m){ m.speed+=0.001*226; m.maxEnergy+=0.01*226; }
+GENE_FUNCS.push(gene226);
+function gene227(m){ m.speed+=0.001*227; m.maxEnergy+=0.01*227; }
+GENE_FUNCS.push(gene227);
+function gene228(m){ m.speed+=0.001*228; m.maxEnergy+=0.01*228; }
+GENE_FUNCS.push(gene228);
+function gene229(m){ m.speed+=0.001*229; m.maxEnergy+=0.01*229; }
+GENE_FUNCS.push(gene229);
+function gene230(m){ m.speed+=0.001*230; m.maxEnergy+=0.01*230; }
+GENE_FUNCS.push(gene230);
+function gene231(m){ m.speed+=0.001*231; m.maxEnergy+=0.01*231; }
+GENE_FUNCS.push(gene231);
+function gene232(m){ m.speed+=0.001*232; m.maxEnergy+=0.01*232; }
+GENE_FUNCS.push(gene232);
+function gene233(m){ m.speed+=0.001*233; m.maxEnergy+=0.01*233; }
+GENE_FUNCS.push(gene233);
+function gene234(m){ m.speed+=0.001*234; m.maxEnergy+=0.01*234; }
+GENE_FUNCS.push(gene234);
+function gene235(m){ m.speed+=0.001*235; m.maxEnergy+=0.01*235; }
+GENE_FUNCS.push(gene235);
+function gene236(m){ m.speed+=0.001*236; m.maxEnergy+=0.01*236; }
+GENE_FUNCS.push(gene236);
+function gene237(m){ m.speed+=0.001*237; m.maxEnergy+=0.01*237; }
+GENE_FUNCS.push(gene237);
+function gene238(m){ m.speed+=0.001*238; m.maxEnergy+=0.01*238; }
+GENE_FUNCS.push(gene238);
+function gene239(m){ m.speed+=0.001*239; m.maxEnergy+=0.01*239; }
+GENE_FUNCS.push(gene239);
+function gene240(m){ m.speed+=0.001*240; m.maxEnergy+=0.01*240; }
+GENE_FUNCS.push(gene240);
+function gene241(m){ m.speed+=0.001*241; m.maxEnergy+=0.01*241; }
+GENE_FUNCS.push(gene241);
+function gene242(m){ m.speed+=0.001*242; m.maxEnergy+=0.01*242; }
+GENE_FUNCS.push(gene242);
+function gene243(m){ m.speed+=0.001*243; m.maxEnergy+=0.01*243; }
+GENE_FUNCS.push(gene243);
+function gene244(m){ m.speed+=0.001*244; m.maxEnergy+=0.01*244; }
+GENE_FUNCS.push(gene244);
+function gene245(m){ m.speed+=0.001*245; m.maxEnergy+=0.01*245; }
+GENE_FUNCS.push(gene245);
+function gene246(m){ m.speed+=0.001*246; m.maxEnergy+=0.01*246; }
+GENE_FUNCS.push(gene246);
+function gene247(m){ m.speed+=0.001*247; m.maxEnergy+=0.01*247; }
+GENE_FUNCS.push(gene247);
+function gene248(m){ m.speed+=0.001*248; m.maxEnergy+=0.01*248; }
+GENE_FUNCS.push(gene248);
+function gene249(m){ m.speed+=0.001*249; m.maxEnergy+=0.01*249; }
+GENE_FUNCS.push(gene249);
+function gene250(m){ m.speed+=0.001*250; m.maxEnergy+=0.01*250; }
+GENE_FUNCS.push(gene250);
+function gene251(m){ m.speed+=0.001*251; m.maxEnergy+=0.01*251; }
+GENE_FUNCS.push(gene251);
+function gene252(m){ m.speed+=0.001*252; m.maxEnergy+=0.01*252; }
+GENE_FUNCS.push(gene252);
+function gene253(m){ m.speed+=0.001*253; m.maxEnergy+=0.01*253; }
+GENE_FUNCS.push(gene253);
+function gene254(m){ m.speed+=0.001*254; m.maxEnergy+=0.01*254; }
+GENE_FUNCS.push(gene254);
+function gene255(m){ m.speed+=0.001*255; m.maxEnergy+=0.01*255; }
+GENE_FUNCS.push(gene255);
+function gene256(m){ m.speed+=0.001*256; m.maxEnergy+=0.01*256; }
+GENE_FUNCS.push(gene256);
+function gene257(m){ m.speed+=0.001*257; m.maxEnergy+=0.01*257; }
+GENE_FUNCS.push(gene257);
+function gene258(m){ m.speed+=0.001*258; m.maxEnergy+=0.01*258; }
+GENE_FUNCS.push(gene258);
+function gene259(m){ m.speed+=0.001*259; m.maxEnergy+=0.01*259; }
+GENE_FUNCS.push(gene259);
+function gene260(m){ m.speed+=0.001*260; m.maxEnergy+=0.01*260; }
+GENE_FUNCS.push(gene260);
+function gene261(m){ m.speed+=0.001*261; m.maxEnergy+=0.01*261; }
+GENE_FUNCS.push(gene261);
+function gene262(m){ m.speed+=0.001*262; m.maxEnergy+=0.01*262; }
+GENE_FUNCS.push(gene262);
+function gene263(m){ m.speed+=0.001*263; m.maxEnergy+=0.01*263; }
+GENE_FUNCS.push(gene263);
+function gene264(m){ m.speed+=0.001*264; m.maxEnergy+=0.01*264; }
+GENE_FUNCS.push(gene264);
+function gene265(m){ m.speed+=0.001*265; m.maxEnergy+=0.01*265; }
+GENE_FUNCS.push(gene265);
+function gene266(m){ m.speed+=0.001*266; m.maxEnergy+=0.01*266; }
+GENE_FUNCS.push(gene266);
+function gene267(m){ m.speed+=0.001*267; m.maxEnergy+=0.01*267; }
+GENE_FUNCS.push(gene267);
+function gene268(m){ m.speed+=0.001*268; m.maxEnergy+=0.01*268; }
+GENE_FUNCS.push(gene268);
+function gene269(m){ m.speed+=0.001*269; m.maxEnergy+=0.01*269; }
+GENE_FUNCS.push(gene269);
+function gene270(m){ m.speed+=0.001*270; m.maxEnergy+=0.01*270; }
+GENE_FUNCS.push(gene270);
+function gene271(m){ m.speed+=0.001*271; m.maxEnergy+=0.01*271; }
+GENE_FUNCS.push(gene271);
+function gene272(m){ m.speed+=0.001*272; m.maxEnergy+=0.01*272; }
+GENE_FUNCS.push(gene272);
+function gene273(m){ m.speed+=0.001*273; m.maxEnergy+=0.01*273; }
+GENE_FUNCS.push(gene273);
+function gene274(m){ m.speed+=0.001*274; m.maxEnergy+=0.01*274; }
+GENE_FUNCS.push(gene274);
+function gene275(m){ m.speed+=0.001*275; m.maxEnergy+=0.01*275; }
+GENE_FUNCS.push(gene275);
+function gene276(m){ m.speed+=0.001*276; m.maxEnergy+=0.01*276; }
+GENE_FUNCS.push(gene276);
+function gene277(m){ m.speed+=0.001*277; m.maxEnergy+=0.01*277; }
+GENE_FUNCS.push(gene277);
+function gene278(m){ m.speed+=0.001*278; m.maxEnergy+=0.01*278; }
+GENE_FUNCS.push(gene278);
+function gene279(m){ m.speed+=0.001*279; m.maxEnergy+=0.01*279; }
+GENE_FUNCS.push(gene279);
+function gene280(m){ m.speed+=0.001*280; m.maxEnergy+=0.01*280; }
+GENE_FUNCS.push(gene280);
+function gene281(m){ m.speed+=0.001*281; m.maxEnergy+=0.01*281; }
+GENE_FUNCS.push(gene281);
+function gene282(m){ m.speed+=0.001*282; m.maxEnergy+=0.01*282; }
+GENE_FUNCS.push(gene282);
+function gene283(m){ m.speed+=0.001*283; m.maxEnergy+=0.01*283; }
+GENE_FUNCS.push(gene283);
+function gene284(m){ m.speed+=0.001*284; m.maxEnergy+=0.01*284; }
+GENE_FUNCS.push(gene284);
+function gene285(m){ m.speed+=0.001*285; m.maxEnergy+=0.01*285; }
+GENE_FUNCS.push(gene285);
+function gene286(m){ m.speed+=0.001*286; m.maxEnergy+=0.01*286; }
+GENE_FUNCS.push(gene286);
+function gene287(m){ m.speed+=0.001*287; m.maxEnergy+=0.01*287; }
+GENE_FUNCS.push(gene287);
+function gene288(m){ m.speed+=0.001*288; m.maxEnergy+=0.01*288; }
+GENE_FUNCS.push(gene288);
+function gene289(m){ m.speed+=0.001*289; m.maxEnergy+=0.01*289; }
+GENE_FUNCS.push(gene289);
+function gene290(m){ m.speed+=0.001*290; m.maxEnergy+=0.01*290; }
+GENE_FUNCS.push(gene290);
+function gene291(m){ m.speed+=0.001*291; m.maxEnergy+=0.01*291; }
+GENE_FUNCS.push(gene291);
+function gene292(m){ m.speed+=0.001*292; m.maxEnergy+=0.01*292; }
+GENE_FUNCS.push(gene292);
+function gene293(m){ m.speed+=0.001*293; m.maxEnergy+=0.01*293; }
+GENE_FUNCS.push(gene293);
+function gene294(m){ m.speed+=0.001*294; m.maxEnergy+=0.01*294; }
+GENE_FUNCS.push(gene294);
+function gene295(m){ m.speed+=0.001*295; m.maxEnergy+=0.01*295; }
+GENE_FUNCS.push(gene295);
+function gene296(m){ m.speed+=0.001*296; m.maxEnergy+=0.01*296; }
+GENE_FUNCS.push(gene296);
+function gene297(m){ m.speed+=0.001*297; m.maxEnergy+=0.01*297; }
+GENE_FUNCS.push(gene297);
+function gene298(m){ m.speed+=0.001*298; m.maxEnergy+=0.01*298; }
+GENE_FUNCS.push(gene298);
+function gene299(m){ m.speed+=0.001*299; m.maxEnergy+=0.01*299; }
+GENE_FUNCS.push(gene299);
+function gene300(m){ m.speed+=0.001*300; m.maxEnergy+=0.01*300; }
+GENE_FUNCS.push(gene300);
+function gene301(m){ m.speed+=0.001*301; m.maxEnergy+=0.01*301; }
+GENE_FUNCS.push(gene301);
+function gene302(m){ m.speed+=0.001*302; m.maxEnergy+=0.01*302; }
+GENE_FUNCS.push(gene302);
+function gene303(m){ m.speed+=0.001*303; m.maxEnergy+=0.01*303; }
+GENE_FUNCS.push(gene303);
+function gene304(m){ m.speed+=0.001*304; m.maxEnergy+=0.01*304; }
+GENE_FUNCS.push(gene304);
+function gene305(m){ m.speed+=0.001*305; m.maxEnergy+=0.01*305; }
+GENE_FUNCS.push(gene305);
+function gene306(m){ m.speed+=0.001*306; m.maxEnergy+=0.01*306; }
+GENE_FUNCS.push(gene306);
+function gene307(m){ m.speed+=0.001*307; m.maxEnergy+=0.01*307; }
+GENE_FUNCS.push(gene307);
+function gene308(m){ m.speed+=0.001*308; m.maxEnergy+=0.01*308; }
+GENE_FUNCS.push(gene308);
+function gene309(m){ m.speed+=0.001*309; m.maxEnergy+=0.01*309; }
+GENE_FUNCS.push(gene309);
+function gene310(m){ m.speed+=0.001*310; m.maxEnergy+=0.01*310; }
+GENE_FUNCS.push(gene310);
+function gene311(m){ m.speed+=0.001*311; m.maxEnergy+=0.01*311; }
+GENE_FUNCS.push(gene311);
+function gene312(m){ m.speed+=0.001*312; m.maxEnergy+=0.01*312; }
+GENE_FUNCS.push(gene312);
+function gene313(m){ m.speed+=0.001*313; m.maxEnergy+=0.01*313; }
+GENE_FUNCS.push(gene313);
+function gene314(m){ m.speed+=0.001*314; m.maxEnergy+=0.01*314; }
+GENE_FUNCS.push(gene314);
+function gene315(m){ m.speed+=0.001*315; m.maxEnergy+=0.01*315; }
+GENE_FUNCS.push(gene315);
+function gene316(m){ m.speed+=0.001*316; m.maxEnergy+=0.01*316; }
+GENE_FUNCS.push(gene316);
+function gene317(m){ m.speed+=0.001*317; m.maxEnergy+=0.01*317; }
+GENE_FUNCS.push(gene317);
+function gene318(m){ m.speed+=0.001*318; m.maxEnergy+=0.01*318; }
+GENE_FUNCS.push(gene318);
+function gene319(m){ m.speed+=0.001*319; m.maxEnergy+=0.01*319; }
+GENE_FUNCS.push(gene319);
+function gene320(m){ m.speed+=0.001*320; m.maxEnergy+=0.01*320; }
+GENE_FUNCS.push(gene320);
+function gene321(m){ m.speed+=0.001*321; m.maxEnergy+=0.01*321; }
+GENE_FUNCS.push(gene321);
+function gene322(m){ m.speed+=0.001*322; m.maxEnergy+=0.01*322; }
+GENE_FUNCS.push(gene322);
+function gene323(m){ m.speed+=0.001*323; m.maxEnergy+=0.01*323; }
+GENE_FUNCS.push(gene323);
+function gene324(m){ m.speed+=0.001*324; m.maxEnergy+=0.01*324; }
+GENE_FUNCS.push(gene324);
+function gene325(m){ m.speed+=0.001*325; m.maxEnergy+=0.01*325; }
+GENE_FUNCS.push(gene325);
+function gene326(m){ m.speed+=0.001*326; m.maxEnergy+=0.01*326; }
+GENE_FUNCS.push(gene326);
+function gene327(m){ m.speed+=0.001*327; m.maxEnergy+=0.01*327; }
+GENE_FUNCS.push(gene327);
+function gene328(m){ m.speed+=0.001*328; m.maxEnergy+=0.01*328; }
+GENE_FUNCS.push(gene328);
+function gene329(m){ m.speed+=0.001*329; m.maxEnergy+=0.01*329; }
+GENE_FUNCS.push(gene329);
+function gene330(m){ m.speed+=0.001*330; m.maxEnergy+=0.01*330; }
+GENE_FUNCS.push(gene330);
+function gene331(m){ m.speed+=0.001*331; m.maxEnergy+=0.01*331; }
+GENE_FUNCS.push(gene331);
+function gene332(m){ m.speed+=0.001*332; m.maxEnergy+=0.01*332; }
+GENE_FUNCS.push(gene332);
+function gene333(m){ m.speed+=0.001*333; m.maxEnergy+=0.01*333; }
+GENE_FUNCS.push(gene333);
+function gene334(m){ m.speed+=0.001*334; m.maxEnergy+=0.01*334; }
+GENE_FUNCS.push(gene334);
+function gene335(m){ m.speed+=0.001*335; m.maxEnergy+=0.01*335; }
+GENE_FUNCS.push(gene335);
+function gene336(m){ m.speed+=0.001*336; m.maxEnergy+=0.01*336; }
+GENE_FUNCS.push(gene336);
+function gene337(m){ m.speed+=0.001*337; m.maxEnergy+=0.01*337; }
+GENE_FUNCS.push(gene337);
+function gene338(m){ m.speed+=0.001*338; m.maxEnergy+=0.01*338; }
+GENE_FUNCS.push(gene338);
+function gene339(m){ m.speed+=0.001*339; m.maxEnergy+=0.01*339; }
+GENE_FUNCS.push(gene339);
+function gene340(m){ m.speed+=0.001*340; m.maxEnergy+=0.01*340; }
+GENE_FUNCS.push(gene340);
+function gene341(m){ m.speed+=0.001*341; m.maxEnergy+=0.01*341; }
+GENE_FUNCS.push(gene341);
+function gene342(m){ m.speed+=0.001*342; m.maxEnergy+=0.01*342; }
+GENE_FUNCS.push(gene342);
+function gene343(m){ m.speed+=0.001*343; m.maxEnergy+=0.01*343; }
+GENE_FUNCS.push(gene343);
+function gene344(m){ m.speed+=0.001*344; m.maxEnergy+=0.01*344; }
+GENE_FUNCS.push(gene344);
+function gene345(m){ m.speed+=0.001*345; m.maxEnergy+=0.01*345; }
+GENE_FUNCS.push(gene345);
+function gene346(m){ m.speed+=0.001*346; m.maxEnergy+=0.01*346; }
+GENE_FUNCS.push(gene346);
+function gene347(m){ m.speed+=0.001*347; m.maxEnergy+=0.01*347; }
+GENE_FUNCS.push(gene347);
+function gene348(m){ m.speed+=0.001*348; m.maxEnergy+=0.01*348; }
+GENE_FUNCS.push(gene348);
+function gene349(m){ m.speed+=0.001*349; m.maxEnergy+=0.01*349; }
+GENE_FUNCS.push(gene349);
+function gene350(m){ m.speed+=0.001*350; m.maxEnergy+=0.01*350; }
+GENE_FUNCS.push(gene350);
+function gene351(m){ m.speed+=0.001*351; m.maxEnergy+=0.01*351; }
+GENE_FUNCS.push(gene351);
+function gene352(m){ m.speed+=0.001*352; m.maxEnergy+=0.01*352; }
+GENE_FUNCS.push(gene352);
+function gene353(m){ m.speed+=0.001*353; m.maxEnergy+=0.01*353; }
+GENE_FUNCS.push(gene353);
+function gene354(m){ m.speed+=0.001*354; m.maxEnergy+=0.01*354; }
+GENE_FUNCS.push(gene354);
+function gene355(m){ m.speed+=0.001*355; m.maxEnergy+=0.01*355; }
+GENE_FUNCS.push(gene355);
+function gene356(m){ m.speed+=0.001*356; m.maxEnergy+=0.01*356; }
+GENE_FUNCS.push(gene356);
+function gene357(m){ m.speed+=0.001*357; m.maxEnergy+=0.01*357; }
+GENE_FUNCS.push(gene357);
+function gene358(m){ m.speed+=0.001*358; m.maxEnergy+=0.01*358; }
+GENE_FUNCS.push(gene358);
+function gene359(m){ m.speed+=0.001*359; m.maxEnergy+=0.01*359; }
+GENE_FUNCS.push(gene359);
+function gene360(m){ m.speed+=0.001*360; m.maxEnergy+=0.01*360; }
+GENE_FUNCS.push(gene360);
+function gene361(m){ m.speed+=0.001*361; m.maxEnergy+=0.01*361; }
+GENE_FUNCS.push(gene361);
+function gene362(m){ m.speed+=0.001*362; m.maxEnergy+=0.01*362; }
+GENE_FUNCS.push(gene362);
+function gene363(m){ m.speed+=0.001*363; m.maxEnergy+=0.01*363; }
+GENE_FUNCS.push(gene363);
+function gene364(m){ m.speed+=0.001*364; m.maxEnergy+=0.01*364; }
+GENE_FUNCS.push(gene364);
+function gene365(m){ m.speed+=0.001*365; m.maxEnergy+=0.01*365; }
+GENE_FUNCS.push(gene365);
+function gene366(m){ m.speed+=0.001*366; m.maxEnergy+=0.01*366; }
+GENE_FUNCS.push(gene366);
+function gene367(m){ m.speed+=0.001*367; m.maxEnergy+=0.01*367; }
+GENE_FUNCS.push(gene367);
+function gene368(m){ m.speed+=0.001*368; m.maxEnergy+=0.01*368; }
+GENE_FUNCS.push(gene368);
+function gene369(m){ m.speed+=0.001*369; m.maxEnergy+=0.01*369; }
+GENE_FUNCS.push(gene369);
+function gene370(m){ m.speed+=0.001*370; m.maxEnergy+=0.01*370; }
+GENE_FUNCS.push(gene370);
+function gene371(m){ m.speed+=0.001*371; m.maxEnergy+=0.01*371; }
+GENE_FUNCS.push(gene371);
+function gene372(m){ m.speed+=0.001*372; m.maxEnergy+=0.01*372; }
+GENE_FUNCS.push(gene372);
+function gene373(m){ m.speed+=0.001*373; m.maxEnergy+=0.01*373; }
+GENE_FUNCS.push(gene373);
+function gene374(m){ m.speed+=0.001*374; m.maxEnergy+=0.01*374; }
+GENE_FUNCS.push(gene374);
+function gene375(m){ m.speed+=0.001*375; m.maxEnergy+=0.01*375; }
+GENE_FUNCS.push(gene375);
+function gene376(m){ m.speed+=0.001*376; m.maxEnergy+=0.01*376; }
+GENE_FUNCS.push(gene376);
+function gene377(m){ m.speed+=0.001*377; m.maxEnergy+=0.01*377; }
+GENE_FUNCS.push(gene377);
+function gene378(m){ m.speed+=0.001*378; m.maxEnergy+=0.01*378; }
+GENE_FUNCS.push(gene378);
+function gene379(m){ m.speed+=0.001*379; m.maxEnergy+=0.01*379; }
+GENE_FUNCS.push(gene379);
+function gene380(m){ m.speed+=0.001*380; m.maxEnergy+=0.01*380; }
+GENE_FUNCS.push(gene380);
+function gene381(m){ m.speed+=0.001*381; m.maxEnergy+=0.01*381; }
+GENE_FUNCS.push(gene381);
+function gene382(m){ m.speed+=0.001*382; m.maxEnergy+=0.01*382; }
+GENE_FUNCS.push(gene382);
+function gene383(m){ m.speed+=0.001*383; m.maxEnergy+=0.01*383; }
+GENE_FUNCS.push(gene383);
+function gene384(m){ m.speed+=0.001*384; m.maxEnergy+=0.01*384; }
+GENE_FUNCS.push(gene384);
+function gene385(m){ m.speed+=0.001*385; m.maxEnergy+=0.01*385; }
+GENE_FUNCS.push(gene385);
+function gene386(m){ m.speed+=0.001*386; m.maxEnergy+=0.01*386; }
+GENE_FUNCS.push(gene386);
+function gene387(m){ m.speed+=0.001*387; m.maxEnergy+=0.01*387; }
+GENE_FUNCS.push(gene387);
+function gene388(m){ m.speed+=0.001*388; m.maxEnergy+=0.01*388; }
+GENE_FUNCS.push(gene388);
+function gene389(m){ m.speed+=0.001*389; m.maxEnergy+=0.01*389; }
+GENE_FUNCS.push(gene389);
+function gene390(m){ m.speed+=0.001*390; m.maxEnergy+=0.01*390; }
+GENE_FUNCS.push(gene390);
+function gene391(m){ m.speed+=0.001*391; m.maxEnergy+=0.01*391; }
+GENE_FUNCS.push(gene391);
+function gene392(m){ m.speed+=0.001*392; m.maxEnergy+=0.01*392; }
+GENE_FUNCS.push(gene392);
+function gene393(m){ m.speed+=0.001*393; m.maxEnergy+=0.01*393; }
+GENE_FUNCS.push(gene393);
+function gene394(m){ m.speed+=0.001*394; m.maxEnergy+=0.01*394; }
+GENE_FUNCS.push(gene394);
+function gene395(m){ m.speed+=0.001*395; m.maxEnergy+=0.01*395; }
+GENE_FUNCS.push(gene395);
+function gene396(m){ m.speed+=0.001*396; m.maxEnergy+=0.01*396; }
+GENE_FUNCS.push(gene396);
+function gene397(m){ m.speed+=0.001*397; m.maxEnergy+=0.01*397; }
+GENE_FUNCS.push(gene397);
+function gene398(m){ m.speed+=0.001*398; m.maxEnergy+=0.01*398; }
+GENE_FUNCS.push(gene398);
+function gene399(m){ m.speed+=0.001*399; m.maxEnergy+=0.01*399; }
+GENE_FUNCS.push(gene399);
+function gene400(m){ m.speed+=0.001*400; m.maxEnergy+=0.01*400; }
+GENE_FUNCS.push(gene400);
+function gene401(m){ m.speed+=0.001*401; m.maxEnergy+=0.01*401; }
+GENE_FUNCS.push(gene401);
+function gene402(m){ m.speed+=0.001*402; m.maxEnergy+=0.01*402; }
+GENE_FUNCS.push(gene402);
+function gene403(m){ m.speed+=0.001*403; m.maxEnergy+=0.01*403; }
+GENE_FUNCS.push(gene403);
+function gene404(m){ m.speed+=0.001*404; m.maxEnergy+=0.01*404; }
+GENE_FUNCS.push(gene404);
+function gene405(m){ m.speed+=0.001*405; m.maxEnergy+=0.01*405; }
+GENE_FUNCS.push(gene405);
+function gene406(m){ m.speed+=0.001*406; m.maxEnergy+=0.01*406; }
+GENE_FUNCS.push(gene406);
+function gene407(m){ m.speed+=0.001*407; m.maxEnergy+=0.01*407; }
+GENE_FUNCS.push(gene407);
+function gene408(m){ m.speed+=0.001*408; m.maxEnergy+=0.01*408; }
+GENE_FUNCS.push(gene408);
+function gene409(m){ m.speed+=0.001*409; m.maxEnergy+=0.01*409; }
+GENE_FUNCS.push(gene409);
+function gene410(m){ m.speed+=0.001*410; m.maxEnergy+=0.01*410; }
+GENE_FUNCS.push(gene410);
+function gene411(m){ m.speed+=0.001*411; m.maxEnergy+=0.01*411; }
+GENE_FUNCS.push(gene411);
+function gene412(m){ m.speed+=0.001*412; m.maxEnergy+=0.01*412; }
+GENE_FUNCS.push(gene412);
+function gene413(m){ m.speed+=0.001*413; m.maxEnergy+=0.01*413; }
+GENE_FUNCS.push(gene413);
+function gene414(m){ m.speed+=0.001*414; m.maxEnergy+=0.01*414; }
+GENE_FUNCS.push(gene414);
+function gene415(m){ m.speed+=0.001*415; m.maxEnergy+=0.01*415; }
+GENE_FUNCS.push(gene415);
+function gene416(m){ m.speed+=0.001*416; m.maxEnergy+=0.01*416; }
+GENE_FUNCS.push(gene416);
+function gene417(m){ m.speed+=0.001*417; m.maxEnergy+=0.01*417; }
+GENE_FUNCS.push(gene417);
+function gene418(m){ m.speed+=0.001*418; m.maxEnergy+=0.01*418; }
+GENE_FUNCS.push(gene418);
+function gene419(m){ m.speed+=0.001*419; m.maxEnergy+=0.01*419; }
+GENE_FUNCS.push(gene419);
+function gene420(m){ m.speed+=0.001*420; m.maxEnergy+=0.01*420; }
+GENE_FUNCS.push(gene420);
+function gene421(m){ m.speed+=0.001*421; m.maxEnergy+=0.01*421; }
+GENE_FUNCS.push(gene421);
+function gene422(m){ m.speed+=0.001*422; m.maxEnergy+=0.01*422; }
+GENE_FUNCS.push(gene422);
+function gene423(m){ m.speed+=0.001*423; m.maxEnergy+=0.01*423; }
+GENE_FUNCS.push(gene423);
+function gene424(m){ m.speed+=0.001*424; m.maxEnergy+=0.01*424; }
+GENE_FUNCS.push(gene424);
+function gene425(m){ m.speed+=0.001*425; m.maxEnergy+=0.01*425; }
+GENE_FUNCS.push(gene425);
+function gene426(m){ m.speed+=0.001*426; m.maxEnergy+=0.01*426; }
+GENE_FUNCS.push(gene426);
+function gene427(m){ m.speed+=0.001*427; m.maxEnergy+=0.01*427; }
+GENE_FUNCS.push(gene427);
+function gene428(m){ m.speed+=0.001*428; m.maxEnergy+=0.01*428; }
+GENE_FUNCS.push(gene428);
+function gene429(m){ m.speed+=0.001*429; m.maxEnergy+=0.01*429; }
+GENE_FUNCS.push(gene429);
+function gene430(m){ m.speed+=0.001*430; m.maxEnergy+=0.01*430; }
+GENE_FUNCS.push(gene430);
+function gene431(m){ m.speed+=0.001*431; m.maxEnergy+=0.01*431; }
+GENE_FUNCS.push(gene431);
+function gene432(m){ m.speed+=0.001*432; m.maxEnergy+=0.01*432; }
+GENE_FUNCS.push(gene432);
+function gene433(m){ m.speed+=0.001*433; m.maxEnergy+=0.01*433; }
+GENE_FUNCS.push(gene433);
+function gene434(m){ m.speed+=0.001*434; m.maxEnergy+=0.01*434; }
+GENE_FUNCS.push(gene434);
+function gene435(m){ m.speed+=0.001*435; m.maxEnergy+=0.01*435; }
+GENE_FUNCS.push(gene435);
+function gene436(m){ m.speed+=0.001*436; m.maxEnergy+=0.01*436; }
+GENE_FUNCS.push(gene436);
+function gene437(m){ m.speed+=0.001*437; m.maxEnergy+=0.01*437; }
+GENE_FUNCS.push(gene437);
+function gene438(m){ m.speed+=0.001*438; m.maxEnergy+=0.01*438; }
+GENE_FUNCS.push(gene438);
+function gene439(m){ m.speed+=0.001*439; m.maxEnergy+=0.01*439; }
+GENE_FUNCS.push(gene439);
+function gene440(m){ m.speed+=0.001*440; m.maxEnergy+=0.01*440; }
+GENE_FUNCS.push(gene440);
+function gene441(m){ m.speed+=0.001*441; m.maxEnergy+=0.01*441; }
+GENE_FUNCS.push(gene441);
+function gene442(m){ m.speed+=0.001*442; m.maxEnergy+=0.01*442; }
+GENE_FUNCS.push(gene442);
+function gene443(m){ m.speed+=0.001*443; m.maxEnergy+=0.01*443; }
+GENE_FUNCS.push(gene443);
+function gene444(m){ m.speed+=0.001*444; m.maxEnergy+=0.01*444; }
+GENE_FUNCS.push(gene444);
+function gene445(m){ m.speed+=0.001*445; m.maxEnergy+=0.01*445; }
+GENE_FUNCS.push(gene445);
+function gene446(m){ m.speed+=0.001*446; m.maxEnergy+=0.01*446; }
+GENE_FUNCS.push(gene446);
+function gene447(m){ m.speed+=0.001*447; m.maxEnergy+=0.01*447; }
+GENE_FUNCS.push(gene447);
+function gene448(m){ m.speed+=0.001*448; m.maxEnergy+=0.01*448; }
+GENE_FUNCS.push(gene448);
+function gene449(m){ m.speed+=0.001*449; m.maxEnergy+=0.01*449; }
+GENE_FUNCS.push(gene449);
+function gene450(m){ m.speed+=0.001*450; m.maxEnergy+=0.01*450; }
+GENE_FUNCS.push(gene450);
+function gene451(m){ m.speed+=0.001*451; m.maxEnergy+=0.01*451; }
+GENE_FUNCS.push(gene451);
+function gene452(m){ m.speed+=0.001*452; m.maxEnergy+=0.01*452; }
+GENE_FUNCS.push(gene452);
+function gene453(m){ m.speed+=0.001*453; m.maxEnergy+=0.01*453; }
+GENE_FUNCS.push(gene453);
+function gene454(m){ m.speed+=0.001*454; m.maxEnergy+=0.01*454; }
+GENE_FUNCS.push(gene454);
+function gene455(m){ m.speed+=0.001*455; m.maxEnergy+=0.01*455; }
+GENE_FUNCS.push(gene455);
+function gene456(m){ m.speed+=0.001*456; m.maxEnergy+=0.01*456; }
+GENE_FUNCS.push(gene456);
+function gene457(m){ m.speed+=0.001*457; m.maxEnergy+=0.01*457; }
+GENE_FUNCS.push(gene457);
+function gene458(m){ m.speed+=0.001*458; m.maxEnergy+=0.01*458; }
+GENE_FUNCS.push(gene458);
+function gene459(m){ m.speed+=0.001*459; m.maxEnergy+=0.01*459; }
+GENE_FUNCS.push(gene459);
+function gene460(m){ m.speed+=0.001*460; m.maxEnergy+=0.01*460; }
+GENE_FUNCS.push(gene460);
+function gene461(m){ m.speed+=0.001*461; m.maxEnergy+=0.01*461; }
+GENE_FUNCS.push(gene461);
+function gene462(m){ m.speed+=0.001*462; m.maxEnergy+=0.01*462; }
+GENE_FUNCS.push(gene462);
+function gene463(m){ m.speed+=0.001*463; m.maxEnergy+=0.01*463; }
+GENE_FUNCS.push(gene463);
+function gene464(m){ m.speed+=0.001*464; m.maxEnergy+=0.01*464; }
+GENE_FUNCS.push(gene464);
+function gene465(m){ m.speed+=0.001*465; m.maxEnergy+=0.01*465; }
+GENE_FUNCS.push(gene465);
+function gene466(m){ m.speed+=0.001*466; m.maxEnergy+=0.01*466; }
+GENE_FUNCS.push(gene466);
+function gene467(m){ m.speed+=0.001*467; m.maxEnergy+=0.01*467; }
+GENE_FUNCS.push(gene467);
+function gene468(m){ m.speed+=0.001*468; m.maxEnergy+=0.01*468; }
+GENE_FUNCS.push(gene468);
+function gene469(m){ m.speed+=0.001*469; m.maxEnergy+=0.01*469; }
+GENE_FUNCS.push(gene469);
+function gene470(m){ m.speed+=0.001*470; m.maxEnergy+=0.01*470; }
+GENE_FUNCS.push(gene470);
+function gene471(m){ m.speed+=0.001*471; m.maxEnergy+=0.01*471; }
+GENE_FUNCS.push(gene471);
+function gene472(m){ m.speed+=0.001*472; m.maxEnergy+=0.01*472; }
+GENE_FUNCS.push(gene472);
+function gene473(m){ m.speed+=0.001*473; m.maxEnergy+=0.01*473; }
+GENE_FUNCS.push(gene473);
+function gene474(m){ m.speed+=0.001*474; m.maxEnergy+=0.01*474; }
+GENE_FUNCS.push(gene474);
+function gene475(m){ m.speed+=0.001*475; m.maxEnergy+=0.01*475; }
+GENE_FUNCS.push(gene475);
+function gene476(m){ m.speed+=0.001*476; m.maxEnergy+=0.01*476; }
+GENE_FUNCS.push(gene476);
+function gene477(m){ m.speed+=0.001*477; m.maxEnergy+=0.01*477; }
+GENE_FUNCS.push(gene477);
+function gene478(m){ m.speed+=0.001*478; m.maxEnergy+=0.01*478; }
+GENE_FUNCS.push(gene478);
+function gene479(m){ m.speed+=0.001*479; m.maxEnergy+=0.01*479; }
+GENE_FUNCS.push(gene479);
+function gene480(m){ m.speed+=0.001*480; m.maxEnergy+=0.01*480; }
+GENE_FUNCS.push(gene480);
+function gene481(m){ m.speed+=0.001*481; m.maxEnergy+=0.01*481; }
+GENE_FUNCS.push(gene481);
+function gene482(m){ m.speed+=0.001*482; m.maxEnergy+=0.01*482; }
+GENE_FUNCS.push(gene482);
+function gene483(m){ m.speed+=0.001*483; m.maxEnergy+=0.01*483; }
+GENE_FUNCS.push(gene483);
+function gene484(m){ m.speed+=0.001*484; m.maxEnergy+=0.01*484; }
+GENE_FUNCS.push(gene484);
+function gene485(m){ m.speed+=0.001*485; m.maxEnergy+=0.01*485; }
+GENE_FUNCS.push(gene485);
+function gene486(m){ m.speed+=0.001*486; m.maxEnergy+=0.01*486; }
+GENE_FUNCS.push(gene486);
+function gene487(m){ m.speed+=0.001*487; m.maxEnergy+=0.01*487; }
+GENE_FUNCS.push(gene487);
+function gene488(m){ m.speed+=0.001*488; m.maxEnergy+=0.01*488; }
+GENE_FUNCS.push(gene488);
+function gene489(m){ m.speed+=0.001*489; m.maxEnergy+=0.01*489; }
+GENE_FUNCS.push(gene489);
+function gene490(m){ m.speed+=0.001*490; m.maxEnergy+=0.01*490; }
+GENE_FUNCS.push(gene490);
+function gene491(m){ m.speed+=0.001*491; m.maxEnergy+=0.01*491; }
+GENE_FUNCS.push(gene491);
+function gene492(m){ m.speed+=0.001*492; m.maxEnergy+=0.01*492; }
+GENE_FUNCS.push(gene492);
+function gene493(m){ m.speed+=0.001*493; m.maxEnergy+=0.01*493; }
+GENE_FUNCS.push(gene493);
+function gene494(m){ m.speed+=0.001*494; m.maxEnergy+=0.01*494; }
+GENE_FUNCS.push(gene494);
+function gene495(m){ m.speed+=0.001*495; m.maxEnergy+=0.01*495; }
+GENE_FUNCS.push(gene495);
+function gene496(m){ m.speed+=0.001*496; m.maxEnergy+=0.01*496; }
+GENE_FUNCS.push(gene496);
+function gene497(m){ m.speed+=0.001*497; m.maxEnergy+=0.01*497; }
+GENE_FUNCS.push(gene497);
+function gene498(m){ m.speed+=0.001*498; m.maxEnergy+=0.01*498; }
+GENE_FUNCS.push(gene498);
+function gene499(m){ m.speed+=0.001*499; m.maxEnergy+=0.01*499; }
+GENE_FUNCS.push(gene499);
+function gene500(m){ m.speed+=0.001*500; m.maxEnergy+=0.01*500; }
+GENE_FUNCS.push(gene500);
+
+
+for(let i=0;i<300;i++){
+  GENE_FUNCS.push(function(m){ m.speed += (Math.random()-0.5)*0.02; m.maxEnergy += Math.random()*0.5; });
+}
+for(let i=0;i<300;i++){
+  GENE_FUNCS.push(function(m){ m.size += (Math.random()-0.5)*0.1; });
+}
+for(let i=0;i<300;i++){
+  GENE_FUNCS.push(function(m){ m.color = `hsl(${Math.floor(Math.random()*360)},70%,60%)`; });
+}
+
+    for(const g of GENE_FUNCS){ if(Math.random()<0.1) player.genes.push(g); }
   </script>
-  // Комментарий расширения 1
-  // Комментарий расширения 2
-  // Комментарий расширения 3
-  // Комментарий расширения 4
-  // Комментарий расширения 5
-  // Комментарий расширения 6
-  // Комментарий расширения 7
-  // Комментарий расширения 8
-  // Комментарий расширения 9
-  // Комментарий расширения 10
-  // Комментарий расширения 11
-  // Комментарий расширения 12
-  // Комментарий расширения 13
-  // Комментарий расширения 14
-  // Комментарий расширения 15
-  // Комментарий расширения 16
-  // Комментарий расширения 17
-  // Комментарий расширения 18
-  // Комментарий расширения 19
-  // Комментарий расширения 20
-  // Комментарий расширения 21
-  // Комментарий расширения 22
-  // Комментарий расширения 23
-  // Комментарий расширения 24
-  // Комментарий расширения 25
-  // Комментарий расширения 26
-  // Комментарий расширения 27
-  // Комментарий расширения 28
-  // Комментарий расширения 29
-  // Комментарий расширения 30
-  // Комментарий расширения 31
-  // Комментарий расширения 32
-  // Комментарий расширения 33
-  // Комментарий расширения 34
-  // Комментарий расширения 35
-  // Комментарий расширения 36
-  // Комментарий расширения 37
-  // Комментарий расширения 38
-  // Комментарий расширения 39
-  // Комментарий расширения 40
-  // Комментарий расширения 41
-  // Комментарий расширения 42
-  // Комментарий расширения 43
-  // Комментарий расширения 44
-  // Комментарий расширения 45
-  // Комментарий расширения 46
-  // Комментарий расширения 47
-  // Комментарий расширения 48
-  // Комментарий расширения 49
-  // Комментарий расширения 50
-  // Комментарий расширения 51
-  // Комментарий расширения 52
-  // Комментарий расширения 53
-  // Комментарий расширения 54
-  // Комментарий расширения 55
-  // Комментарий расширения 56
-  // Комментарий расширения 57
-  // Комментарий расширения 58
-  // Комментарий расширения 59
-  // Комментарий расширения 60
-  // Комментарий расширения 61
-  // Комментарий расширения 62
-  // Комментарий расширения 63
-  // Комментарий расширения 64
-  // Комментарий расширения 65
-  // Комментарий расширения 66
-  // Комментарий расширения 67
-  // Комментарий расширения 68
-  // Комментарий расширения 69
-  // Комментарий расширения 70
-  // Комментарий расширения 71
-  // Комментарий расширения 72
-  // Комментарий расширения 73
-  // Комментарий расширения 74
-  // Комментарий расширения 75
-  // Комментарий расширения 76
-  // Комментарий расширения 77
-  // Комментарий расширения 78
-  // Комментарий расширения 79
-  // Комментарий расширения 80
-  // Комментарий расширения 81
-  // Комментарий расширения 82
-  // Комментарий расширения 83
-  // Комментарий расширения 84
-  // Комментарий расширения 85
-  // Комментарий расширения 86
-  // Комментарий расширения 87
-  // Комментарий расширения 88
-  // Комментарий расширения 89
-  // Комментарий расширения 90
-  // Комментарий расширения 91
-  // Комментарий расширения 92
-  // Комментарий расширения 93
-  // Комментарий расширения 94
-  // Комментарий расширения 95
-  // Комментарий расширения 96
-  // Комментарий расширения 97
-  // Комментарий расширения 98
-  // Комментарий расширения 99
-  // Комментарий расширения 100
-  // Комментарий расширения 101
-  // Комментарий расширения 102
-  // Комментарий расширения 103
-  // Комментарий расширения 104
-  // Комментарий расширения 105
-  // Комментарий расширения 106
-  // Комментарий расширения 107
-  // Комментарий расширения 108
-  // Комментарий расширения 109
-  // Комментарий расширения 110
-  // Комментарий расширения 111
-  // Комментарий расширения 112
-  // Комментарий расширения 113
-  // Комментарий расширения 114
-  // Комментарий расширения 115
-  // Комментарий расширения 116
-  // Комментарий расширения 117
-  // Комментарий расширения 118
-  // Комментарий расширения 119
-  // Комментарий расширения 120
-  // Комментарий расширения 121
-  // Комментарий расширения 122
-  // Комментарий расширения 123
-  // Комментарий расширения 124
-  // Комментарий расширения 125
-  // Комментарий расширения 126
-  // Комментарий расширения 127
-  // Комментарий расширения 128
-  // Комментарий расширения 129
-  // Комментарий расширения 130
-  // Комментарий расширения 131
-  // Комментарий расширения 132
-  // Комментарий расширения 133
-  // Комментарий расширения 134
-  // Комментарий расширения 135
-  // Комментарий расширения 136
-  // Комментарий расширения 137
-  // Комментарий расширения 138
-  // Комментарий расширения 139
-  // Комментарий расширения 140
-  // Комментарий расширения 141
-  // Комментарий расширения 142
-  // Комментарий расширения 143
-  // Комментарий расширения 144
-  // Комментарий расширения 145
-  // Комментарий расширения 146
-  // Комментарий расширения 147
-  // Комментарий расширения 148
-  // Комментарий расширения 149
-  // Комментарий расширения 150
-  // Комментарий расширения 151
-  // Комментарий расширения 152
-  // Комментарий расширения 153
-  // Комментарий расширения 154
-  // Комментарий расширения 155
-  // Комментарий расширения 156
-  // Комментарий расширения 157
-  // Комментарий расширения 158
-  // Комментарий расширения 159
-  // Комментарий расширения 160
-  // Комментарий расширения 161
-  // Комментарий расширения 162
-  // Комментарий расширения 163
-  // Комментарий расширения 164
-  // Комментарий расширения 165
-  // Комментарий расширения 166
-  // Комментарий расширения 167
-  // Комментарий расширения 168
-  // Комментарий расширения 169
-  // Комментарий расширения 170
-  // Комментарий расширения 171
-  // Комментарий расширения 172
-  // Комментарий расширения 173
-  // Комментарий расширения 174
-  // Комментарий расширения 175
-  // Комментарий расширения 176
-  // Комментарий расширения 177
-  // Комментарий расширения 178
-  // Комментарий расширения 179
-  // Комментарий расширения 180
-  // Комментарий расширения 181
-  // Комментарий расширения 182
-  // Комментарий расширения 183
-  // Комментарий расширения 184
-  // Комментарий расширения 185
-  // Комментарий расширения 186
-  // Комментарий расширения 187
-  // Комментарий расширения 188
-  // Комментарий расширения 189
-  // Комментарий расширения 190
-  // Комментарий расширения 191
-  // Комментарий расширения 192
-  // Комментарий расширения 193
-  // Комментарий расширения 194
-  // Комментарий расширения 195
-  // Комментарий расширения 196
-  // Комментарий расширения 197
-  // Комментарий расширения 198
-  // Комментарий расширения 199
-  // Комментарий расширения 200
-  // Комментарий расширения 201
-  // Комментарий расширения 202
-  // Комментарий расширения 203
-  // Комментарий расширения 204
-  // Комментарий расширения 205
-  // Комментарий расширения 206
-  // Комментарий расширения 207
-  // Комментарий расширения 208
-  // Комментарий расширения 209
-  // Комментарий расширения 210
-  // Комментарий расширения 211
-  // Комментарий расширения 212
-  // Комментарий расширения 213
-  // Комментарий расширения 214
-  // Комментарий расширения 215
-  // Комментарий расширения 216
-  // Комментарий расширения 217
-  // Комментарий расширения 218
-  // Комментарий расширения 219
-  // Комментарий расширения 220
-  // Комментарий расширения 221
-  // Комментарий расширения 222
-  // Комментарий расширения 223
-  // Комментарий расширения 224
-  // Комментарий расширения 225
-  // Комментарий расширения 226
-  // Комментарий расширения 227
-  // Комментарий расширения 228
-  // Комментарий расширения 229
-  // Комментарий расширения 230
-  // Комментарий расширения 231
-  // Комментарий расширения 232
-  // Комментарий расширения 233
-  // Комментарий расширения 234
-  // Комментарий расширения 235
-  // Комментарий расширения 236
-  // Комментарий расширения 237
-  // Комментарий расширения 238
-  // Комментарий расширения 239
-  // Комментарий расширения 240
-  // Комментарий расширения 241
-  // Комментарий расширения 242
-  // Комментарий расширения 243
-  // Комментарий расширения 244
-  // Комментарий расширения 245
-  // Комментарий расширения 246
-  // Комментарий расширения 247
-  // Комментарий расширения 248
-  // Комментарий расширения 249
-  // Комментарий расширения 250
-  // Комментарий расширения 251
-  // Комментарий расширения 252
-  // Комментарий расширения 253
-  // Комментарий расширения 254
-  // Комментарий расширения 255
-  // Комментарий расширения 256
-  // Комментарий расширения 257
-  // Комментарий расширения 258
-  // Комментарий расширения 259
-  // Комментарий расширения 260
-  // Комментарий расширения 261
-  // Комментарий расширения 262
-  // Комментарий расширения 263
-  // Комментарий расширения 264
-  // Комментарий расширения 265
-  // Комментарий расширения 266
-  // Комментарий расширения 267
-  // Комментарий расширения 268
-  // Комментарий расширения 269
-  // Комментарий расширения 270
-  // Комментарий расширения 271
-  // Комментарий расширения 272
-  // Комментарий расширения 273
-  // Комментарий расширения 274
-  // Комментарий расширения 275
-  // Комментарий расширения 276
-  // Комментарий расширения 277
-  // Комментарий расширения 278
-  // Комментарий расширения 279
-  // Комментарий расширения 280
-  // Комментарий расширения 281
-  // Комментарий расширения 282
-  // Комментарий расширения 283
-  // Комментарий расширения 284
-  // Комментарий расширения 285
-  // Комментарий расширения 286
-  // Комментарий расширения 287
-  // Комментарий расширения 288
-  // Комментарий расширения 289
-  // Комментарий расширения 290
-  // Комментарий расширения 291
-  // Комментарий расширения 292
-  // Комментарий расширения 293
-  // Комментарий расширения 294
-  // Комментарий расширения 295
-  // Комментарий расширения 296
-  // Комментарий расширения 297
-  // Комментарий расширения 298
-  // Комментарий расширения 299
-  // Комментарий расширения 300
-  // Комментарий расширения 301
-  // Комментарий расширения 302
-  // Комментарий расширения 303
-  // Комментарий расширения 304
-  // Комментарий расширения 305
-  // Комментарий расширения 306
-  // Комментарий расширения 307
-  // Комментарий расширения 308
-  // Комментарий расширения 309
-  // Комментарий расширения 310
-  // Комментарий расширения 311
-  // Комментарий расширения 312
-  // Комментарий расширения 313
-  // Комментарий расширения 314
-  // Комментарий расширения 315
-  // Комментарий расширения 316
-  // Комментарий расширения 317
-  // Комментарий расширения 318
-  // Комментарий расширения 319
-  // Комментарий расширения 320
-  // Комментарий расширения 321
-  // Комментарий расширения 322
-  // Комментарий расширения 323
-  // Комментарий расширения 324
-  // Комментарий расширения 325
-  // Комментарий расширения 326
-  // Комментарий расширения 327
-  // Комментарий расширения 328
-  // Комментарий расширения 329
-  // Комментарий расширения 330
-  // Комментарий расширения 331
-  // Комментарий расширения 332
-  // Комментарий расширения 333
-  // Комментарий расширения 334
-  // Комментарий расширения 335
-  // Комментарий расширения 336
-  // Комментарий расширения 337
-  // Комментарий расширения 338
-  // Комментарий расширения 339
-  // Комментарий расширения 340
-  // Комментарий расширения 341
-  // Комментарий расширения 342
-  // Комментарий расширения 343
-  // Комментарий расширения 344
-  // Комментарий расширения 345
-  // Комментарий расширения 346
-  // Комментарий расширения 347
-  // Комментарий расширения 348
-  // Комментарий расширения 349
-  // Комментарий расширения 350
-  // Комментарий расширения 351
-  // Комментарий расширения 352
-  // Комментарий расширения 353
-  // Комментарий расширения 354
-  // Комментарий расширения 355
-  // Комментарий расширения 356
-  // Комментарий расширения 357
-  // Комментарий расширения 358
-  // Комментарий расширения 359
-  // Комментарий расширения 360
-  // Комментарий расширения 361
-  // Комментарий расширения 362
-  // Комментарий расширения 363
-  // Комментарий расширения 364
-  // Комментарий расширения 365
-  // Комментарий расширения 366
-  // Комментарий расширения 367
-  // Комментарий расширения 368
-  // Комментарий расширения 369
-  // Комментарий расширения 370
-  // Комментарий расширения 371
-  // Комментарий расширения 372
-  // Комментарий расширения 373
-  // Комментарий расширения 374
-  // Комментарий расширения 375
-  // Комментарий расширения 376
-  // Комментарий расширения 377
-  // Комментарий расширения 378
-  // Комментарий расширения 379
-  // Комментарий расширения 380
-  // Комментарий расширения 381
-  // Комментарий расширения 382
-  // Комментарий расширения 383
-  // Комментарий расширения 384
-  // Комментарий расширения 385
-  // Комментарий расширения 386
-  // Комментарий расширения 387
-  // Комментарий расширения 388
-  // Комментарий расширения 389
-  // Комментарий расширения 390
-  // Комментарий расширения 391
-  // Комментарий расширения 392
-  // Комментарий расширения 393
-  // Комментарий расширения 394
-  // Комментарий расширения 395
-  // Комментарий расширения 396
-  // Комментарий расширения 397
-  // Комментарий расширения 398
-  // Комментарий расширения 399
-  // Комментарий расширения 400
-  // Комментарий расширения 401
-  // Комментарий расширения 402
-  // Комментарий расширения 403
-  // Комментарий расширения 404
-  // Комментарий расширения 405
-  // Комментарий расширения 406
-  // Комментарий расширения 407
-  // Комментарий расширения 408
-  // Комментарий расширения 409
-  // Комментарий расширения 410
-  // Комментарий расширения 411
-  // Комментарий расширения 412
-  // Комментарий расширения 413
-  // Комментарий расширения 414
-  // Комментарий расширения 415
-  // Комментарий расширения 416
-  // Комментарий расширения 417
-  // Комментарий расширения 418
-  // Комментарий расширения 419
-  // Комментарий расширения 420
-  // Комментарий расширения 421
-  // Комментарий расширения 422
-  // Комментарий расширения 423
-  // Комментарий расширения 424
-  // Комментарий расширения 425
-  // Комментарий расширения 426
-  // Комментарий расширения 427
-  // Комментарий расширения 428
-  // Комментарий расширения 429
-  // Комментарий расширения 430
-  // Комментарий расширения 431
-  // Комментарий расширения 432
-  // Комментарий расширения 433
-  // Комментарий расширения 434
-  // Комментарий расширения 435
-  // Комментарий расширения 436
-  // Комментарий расширения 437
-  // Комментарий расширения 438
-  // Комментарий расширения 439
-  // Комментарий расширения 440
-  // Комментарий расширения 441
-  // Комментарий расширения 442
-  // Комментарий расширения 443
-  // Комментарий расширения 444
-  // Комментарий расширения 445
-  // Комментарий расширения 446
-  // Комментарий расширения 447
-  // Комментарий расширения 448
-  // Комментарий расширения 449
-  // Комментарий расширения 450
-  // Комментарий расширения 451
-  // Комментарий расширения 452
-  // Комментарий расширения 453
-  // Комментарий расширения 454
-  // Комментарий расширения 455
-  // Комментарий расширения 456
-  // Комментарий расширения 457
-  // Комментарий расширения 458
-  // Комментарий расширения 459
-  // Комментарий расширения 460
-  // Комментарий расширения 461
-  // Комментарий расширения 462
-  // Комментарий расширения 463
-  // Комментарий расширения 464
-  // Комментарий расширения 465
-  // Комментарий расширения 466
-  // Комментарий расширения 467
-  // Комментарий расширения 468
-  // Комментарий расширения 469
-  // Комментарий расширения 470
-  // Комментарий расширения 471
-  // Комментарий расширения 472
-  // Комментарий расширения 473
-  // Комментарий расширения 474
-  // Комментарий расширения 475
-  // Комментарий расширения 476
-  // Комментарий расширения 477
-  // Комментарий расширения 478
-  // Комментарий расширения 479
-  // Комментарий расширения 480
-  // Комментарий расширения 481
-  // Комментарий расширения 482
-  // Комментарий расширения 483
-  // Комментарий расширения 484
-  // Комментарий расширения 485
-  // Комментарий расширения 486
-  // Комментарий расширения 487
-  // Комментарий расширения 488
-  // Комментарий расширения 489
-  // Комментарий расширения 490
-  // Комментарий расширения 491
-  // Комментарий расширения 492
-  // Комментарий расширения 493
-  // Комментарий расширения 494
-  // Комментарий расширения 495
-  // Комментарий расширения 496
-  // Комментарий расширения 497
-  // Комментарий расширения 498
-  // Комментарий расширения 499
-  // Комментарий расширения 500
-  // Комментарий расширения 501
-  // Комментарий расширения 502
-  // Комментарий расширения 503
-  // Комментарий расширения 504
-  // Комментарий расширения 505
-  // Комментарий расширения 506
-  // Комментарий расширения 507
-  // Комментарий расширения 508
-  // Комментарий расширения 509
-  // Комментарий расширения 510
-  // Комментарий расширения 511
-  // Комментарий расширения 512
-  // Комментарий расширения 513
-  // Комментарий расширения 514
-  // Комментарий расширения 515
-  // Комментарий расширения 516
-  // Комментарий расширения 517
-  // Комментарий расширения 518
-  // Комментарий расширения 519
-  // Комментарий расширения 520
-  // Комментарий расширения 521
-  // Комментарий расширения 522
-  // Комментарий расширения 523
-  // Комментарий расширения 524
-  // Комментарий расширения 525
-  // Комментарий расширения 526
-  // Комментарий расширения 527
-  // Комментарий расширения 528
-  // Комментарий расширения 529
-  // Комментарий расширения 530
-  // Комментарий расширения 531
-  // Комментарий расширения 532
-  // Комментарий расширения 533
-  // Комментарий расширения 534
-  // Комментарий расширения 535
-  // Комментарий расширения 536
-  // Комментарий расширения 537
-  // Комментарий расширения 538
-  // Комментарий расширения 539
-  // Комментарий расширения 540
-  // Комментарий расширения 541
-  // Комментарий расширения 542
-  // Комментарий расширения 543
-  // Комментарий расширения 544
-  // Комментарий расширения 545
-  // Комментарий расширения 546
-  // Комментарий расширения 547
-  // Комментарий расширения 548
-  // Комментарий расширения 549
-  // Комментарий расширения 550
-  // Комментарий расширения 551
-  // Комментарий расширения 552
-  // Комментарий расширения 553
-  // Комментарий расширения 554
-  // Комментарий расширения 555
-  // Комментарий расширения 556
-  // Комментарий расширения 557
-  // Комментарий расширения 558
-  // Комментарий расширения 559
-  // Комментарий расширения 560
-  // Комментарий расширения 561
-  // Комментарий расширения 562
-  // Комментарий расширения 563
-  // Комментарий расширения 564
-  // Комментарий расширения 565
-  // Комментарий расширения 566
-  // Комментарий расширения 567
-  // Комментарий расширения 568
-  // Комментарий расширения 569
-  // Комментарий расширения 570
-  // Комментарий расширения 571
-  // Комментарий расширения 572
-  // Комментарий расширения 573
-  // Комментарий расширения 574
-  // Комментарий расширения 575
-  // Комментарий расширения 576
-  // Комментарий расширения 577
-  // Комментарий расширения 578
-  // Комментарий расширения 579
-  // Комментарий расширения 580
-  // Комментарий расширения 581
-  // Комментарий расширения 582
-  // Комментарий расширения 583
-  // Комментарий расширения 584
-  // Комментарий расширения 585
-  // Комментарий расширения 586
-  // Комментарий расширения 587
-  // Комментарий расширения 588
-  // Комментарий расширения 589
-  // Комментарий расширения 590
-  // Комментарий расширения 591
-  // Комментарий расширения 592
-  // Комментарий расширения 593
-  // Комментарий расширения 594
-  // Комментарий расширения 595
-  // Комментарий расширения 596
-  // Комментарий расширения 597
-  // Комментарий расширения 598
-  // Комментарий расширения 599
-  // Комментарий расширения 600
-  // Комментарий расширения 601
-  // Комментарий расширения 602
-  // Комментарий расширения 603
-  // Комментарий расширения 604
-  // Комментарий расширения 605
-  // Комментарий расширения 606
-  // Комментарий расширения 607
-  // Комментарий расширения 608
-  // Комментарий расширения 609
-  // Комментарий расширения 610
-  // Комментарий расширения 611
-  // Комментарий расширения 612
-  // Комментарий расширения 613
-  // Комментарий расширения 614
-  // Комментарий расширения 615
-  // Комментарий расширения 616
-  // Комментарий расширения 617
-  // Комментарий расширения 618
-  // Комментарий расширения 619
-  // Комментарий расширения 620
-  // Комментарий расширения 621
-  // Комментарий расширения 622
-  // Комментарий расширения 623
-  // Комментарий расширения 624
-  // Комментарий расширения 625
-  // Комментарий расширения 626
-  // Комментарий расширения 627
-  // Комментарий расширения 628
-  // Комментарий расширения 629
-  // Комментарий расширения 630
-  // Комментарий расширения 631
-  // Комментарий расширения 632
-  // Комментарий расширения 633
-  // Комментарий расширения 634
-  // Комментарий расширения 635
-  // Комментарий расширения 636
-  // Комментарий расширения 637
-  // Комментарий расширения 638
-  // Комментарий расширения 639
-  // Комментарий расширения 640
-  // Комментарий расширения 641
-  // Комментарий расширения 642
-  // Комментарий расширения 643
-  // Комментарий расширения 644
-  // Комментарий расширения 645
-  // Комментарий расширения 646
-  // Комментарий расширения 647
-  // Комментарий расширения 648
-  // Комментарий расширения 649
-  // Комментарий расширения 650
-  // Комментарий расширения 651
-  // Комментарий расширения 652
-  // Комментарий расширения 653
-  // Комментарий расширения 654
-  // Комментарий расширения 655
-  // Комментарий расширения 656
-  // Комментарий расширения 657
-  // Комментарий расширения 658
-  // Комментарий расширения 659
-  // Комментарий расширения 660
-  // Комментарий расширения 661
-  // Комментарий расширения 662
-  // Комментарий расширения 663
-  // Комментарий расширения 664
-  // Комментарий расширения 665
-  // Комментарий расширения 666
-  // Комментарий расширения 667
-  // Комментарий расширения 668
-  // Комментарий расширения 669
-  // Комментарий расширения 670
-  // Комментарий расширения 671
-  // Комментарий расширения 672
-  // Комментарий расширения 673
-  // Комментарий расширения 674
-  // Комментарий расширения 675
-  // Комментарий расширения 676
-  // Комментарий расширения 677
-  // Комментарий расширения 678
-  // Комментарий расширения 679
-  // Комментарий расширения 680
-  // Комментарий расширения 681
-  // Комментарий расширения 682
-  // Комментарий расширения 683
-  // Комментарий расширения 684
-  // Комментарий расширения 685
-  // Комментарий расширения 686
-  // Комментарий расширения 687
-  // Комментарий расширения 688
-  // Комментарий расширения 689
-  // Комментарий расширения 690
-  // Комментарий расширения 691
-  // Комментарий расширения 692
-  // Комментарий расширения 693
-  // Комментарий расширения 694
-  // Комментарий расширения 695
-  // Комментарий расширения 696
-  // Комментарий расширения 697
-  // Комментарий расширения 698
-  // Комментарий расширения 699
-  // Комментарий расширения 700
-  // Комментарий расширения 701
-  // Комментарий расширения 702
-  // Комментарий расширения 703
-  // Комментарий расширения 704
-  // Комментарий расширения 705
-  // Комментарий расширения 706
-  // Комментарий расширения 707
-  // Комментарий расширения 708
-  // Комментарий расширения 709
-  // Комментарий расширения 710
-  // Комментарий расширения 711
-  // Комментарий расширения 712
-  // Комментарий расширения 713
-  // Комментарий расширения 714
-  // Комментарий расширения 715
-  // Комментарий расширения 716
-  // Комментарий расширения 717
-  // Комментарий расширения 718
-  // Комментарий расширения 719
-  // Комментарий расширения 720
-  // Комментарий расширения 721
-  // Комментарий расширения 722
-  // Комментарий расширения 723
-  // Комментарий расширения 724
-  // Комментарий расширения 725
-  // Комментарий расширения 726
-  // Комментарий расширения 727
-  // Комментарий расширения 728
-  // Комментарий расширения 729
-  // Комментарий расширения 730
-  // Комментарий расширения 731
-  // Комментарий расширения 732
-  // Комментарий расширения 733
-  // Комментарий расширения 734
-  // Комментарий расширения 735
-  // Комментарий расширения 736
-  // Комментарий расширения 737
-  // Комментарий расширения 738
-  // Комментарий расширения 739
-  // Комментарий расширения 740
-  // Комментарий расширения 741
-  // Комментарий расширения 742
-  // Комментарий расширения 743
-  // Комментарий расширения 744
-  // Комментарий расширения 745
-  // Комментарий расширения 746
-  // Комментарий расширения 747
-  // Комментарий расширения 748
-  // Комментарий расширения 749
-  // Комментарий расширения 750
-  // Комментарий расширения 751
-  // Комментарий расширения 752
-  // Комментарий расширения 753
-  // Комментарий расширения 754
-  // Комментарий расширения 755
-  // Комментарий расширения 756
-  // Комментарий расширения 757
-  // Комментарий расширения 758
-  // Комментарий расширения 759
-  // Комментарий расширения 760
-  // Комментарий расширения 761
-  // Комментарий расширения 762
-  // Комментарий расширения 763
-  // Комментарий расширения 764
-  // Комментарий расширения 765
-  // Комментарий расширения 766
-  // Комментарий расширения 767
-  // Комментарий расширения 768
-  // Комментарий расширения 769
-  // Комментарий расширения 770
-  // Комментарий расширения 771
-  // Комментарий расширения 772
-  // Комментарий расширения 773
-  // Комментарий расширения 774
-  // Комментарий расширения 775
-  // Комментарий расширения 776
-  // Комментарий расширения 777
-  // Комментарий расширения 778
-  // Комментарий расширения 779
-  // Комментарий расширения 780
-  // Комментарий расширения 781
-  // Комментарий расширения 782
-  // Комментарий расширения 783
-  // Комментарий расширения 784
-  // Комментарий расширения 785
-  // Комментарий расширения 786
-  // Комментарий расширения 787
-  // Комментарий расширения 788
-  // Комментарий расширения 789
-  // Комментарий расширения 790
-  // Комментарий расширения 791
-  // Комментарий расширения 792
-  // Комментарий расширения 793
-  // Комментарий расширения 794
-  // Комментарий расширения 795
-  // Комментарий расширения 796
-  // Комментарий расширения 797
-  // Комментарий расширения 798
-  // Комментарий расширения 799
-  // Комментарий расширения 800
-  // Комментарий расширения 801
-  // Комментарий расширения 802
-  // Комментарий расширения 803
-  // Комментарий расширения 804
-  // Комментарий расширения 805
-  // Комментарий расширения 806
-  // Комментарий расширения 807
-  // Комментарий расширения 808
-  // Комментарий расширения 809
-  // Комментарий расширения 810
-  // Комментарий расширения 811
-  // Комментарий расширения 812
-  // Комментарий расширения 813
-  // Комментарий расширения 814
-  // Комментарий расширения 815
-  // Комментарий расширения 816
-  // Комментарий расширения 817
-  // Комментарий расширения 818
-  // Комментарий расширения 819
-  // Комментарий расширения 820
-  // Комментарий расширения 821
-  // Комментарий расширения 822
-  // Комментарий расширения 823
-  // Комментарий расширения 824
-  // Комментарий расширения 825
-  // Комментарий расширения 826
-  // Комментарий расширения 827
-  // Комментарий расширения 828
-  // Комментарий расширения 829
-  // Комментарий расширения 830
-  // Комментарий расширения 831
-  // Комментарий расширения 832
-  // Комментарий расширения 833
-  // Комментарий расширения 834
-  // Комментарий расширения 835
-  // Комментарий расширения 836
-  // Комментарий расширения 837
-  // Комментарий расширения 838
-  // Комментарий расширения 839
-  // Комментарий расширения 840
-  // Комментарий расширения 841
-  // Комментарий расширения 842
-  // Комментарий расширения 843
-  // Комментарий расширения 844
-  // Комментарий расширения 845
-  // Комментарий расширения 846
-  // Комментарий расширения 847
-  // Комментарий расширения 848
-  // Комментарий расширения 849
-  // Комментарий расширения 850
-</body>
-</html>
-  // Дополнительный блок комментариев 851
-  // Дополнительный блок комментариев 852
-  // Дополнительный блок комментариев 853
-  // Дополнительный блок комментариев 854
-  // Дополнительный блок комментариев 855
-  // Дополнительный блок комментариев 856
-  // Дополнительный блок комментариев 857
-  // Дополнительный блок комментариев 858
-  // Дополнительный блок комментариев 859
-  // Дополнительный блок комментариев 860
-  // Дополнительный блок комментариев 861
-  // Дополнительный блок комментариев 862
-  // Дополнительный блок комментариев 863
-  // Дополнительный блок комментариев 864
-  // Дополнительный блок комментариев 865
-  // Дополнительный блок комментариев 866
-  // Дополнительный блок комментариев 867
-  // Дополнительный блок комментариев 868
-  // Дополнительный блок комментариев 869
-  // Дополнительный блок комментариев 870
-  // Дополнительный блок комментариев 871
-  // Дополнительный блок комментариев 872
-  // Дополнительный блок комментариев 873
-  // Дополнительный блок комментариев 874
-  // Дополнительный блок комментариев 875
-  // Дополнительный блок комментариев 876
-  // Дополнительный блок комментариев 877
-  // Дополнительный блок комментариев 878
-  // Дополнительный блок комментариев 879
-  // Дополнительный блок комментариев 880
-  // Дополнительный блок комментариев 881
-  // Дополнительный блок комментариев 882
-  // Дополнительный блок комментариев 883
-  // Дополнительный блок комментариев 884
-  // Дополнительный блок комментариев 885
-  // Дополнительный блок комментариев 886
-  // Дополнительный блок комментариев 887
-  // Дополнительный блок комментариев 888
-  // Дополнительный блок комментариев 889
-  // Дополнительный блок комментариев 890
 </body>
 </html>
