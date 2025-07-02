@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Micro Evolution</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      overflow: hidden;
+      background: #0f0f1a;
+      color: white;
+      font-family: Arial, sans-serif;
+    }
+    #ui {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      padding: 5px 10px;
+      background: rgba(0,0,0,0.5);
+      border-radius: 4px;
+      font-size: 14px;
+    }
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="world"></canvas>
+  <div id="ui"></div>
+  <div id="help" style="position:absolute;bottom:10px;left:10px;background:rgba(0,0,0,0.5);padding:4px 8px;border-radius:4px;font-size:14px">WASD/стрелки – движение</div>
+  <script>
+    const canvas = document.getElementById('world');
+    const ctx = canvas.getContext('2d');
+    resize();
+    window.addEventListener('resize', resize);
+
+    const microbes = [];
+    const foods = [];
+    let player;
+    const keys = {};
+    document.addEventListener('keydown', e => keys[e.code] = true);
+    document.addEventListener('keyup', e => keys[e.code] = false);
+
+    function rand(min, max) { return Math.random() * (max - min) + min; }
+
+class Microbe {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.dx = rand(-1, 1);
+        this.dy = rand(-1, 1);
+        this.size = 5;
+        this.energy = 20;
+        this.age = 0;
+        this.color = `hsl(${rand(0,360)},70%,60%)`;
+        this.multicell = false;
+      }
+
+      step() {
+        this.x += this.dx;
+        this.y += this.dy;
+        if (this.x < 0 || this.x > canvas.width) this.dx *= -1;
+        if (this.y < 0 || this.y > canvas.height) this.dy *= -1;
+        this.energy -= 0.02 * (Math.abs(this.dx) + Math.abs(this.dy));
+        this.age += 1;
+        // seek food
+        for (const f of foods) {
+          const dist = Math.hypot(this.x - f.x, this.y - f.y);
+          if (dist < this.size + 2) {
+            this.energy += 10;
+            foods.splice(foods.indexOf(f), 1);
+          }
+        }
+        // reproduce
+        if (this.energy > 40) {
+          this.energy /= 2;
+          const child = new Microbe(this.x + rand(-10,10), this.y + rand(-10,10));
+          const hue = (parseInt(this.color.match(/hsl\((\d+)/)[1]) + rand(-20,20) + 360) % 360;
+          child.color = `hsl(${hue},70%,60%)`;
+          child.dx = rand(-1,1);
+          child.dy = rand(-1,1);
+          microbes.push(child);
+        }
+        // multicell transition
+        if (!this.multicell && this.energy > 80) {
+          this.multicell = true;
+          this.size = 10;
+          this.color = 'white';
+        }
+        if (this.energy <= 0 || this.age > 1000) {
+          microbes.splice(microbes.indexOf(this), 1);
+        }
+      }
+
+      draw() {
+        ctx.beginPath();
+        ctx.fillStyle = this.color;
+        ctx.arc(this.x, this.y, this.size, 0, Math.PI*2);
+        ctx.fill();
+      }
+    }
+
+class Player extends Microbe {
+      constructor(x, y) {
+        super(x, y);
+        this.color = '#ff0';
+      }
+      step() {
+        if (keys['ArrowUp'] || keys['KeyW']) this.dy -= 0.1;
+        if (keys['ArrowDown'] || keys['KeyS']) this.dy += 0.1;
+        if (keys['ArrowLeft'] || keys['KeyA']) this.dx -= 0.1;
+        if (keys['ArrowRight'] || keys['KeyD']) this.dx += 0.1;
+        super.step();
+      }
+    }
+
+    function spawnFood() {
+      foods.push({x: rand(0, canvas.width), y: rand(0, canvas.height)});
+    }
+
+    player = new Player(canvas.width/2, canvas.height/2);
+    microbes.push(player);
+    for (let i = 0; i < 4; i++) microbes.push(new Microbe(rand(0, canvas.width), rand(0, canvas.height)));
+    for (let i = 0; i < 20; i++) spawnFood();
+
+    function step() {
+      if (Math.random() < 0.05) spawnFood();
+      ctx.fillStyle = '#0f0f1a';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      for (const m of microbes) m.step();
+      for (const m of microbes) m.draw();
+      ctx.fillStyle = '#6ff';
+      for (const f of foods) {
+        ctx.beginPath();
+        ctx.arc(f.x, f.y, 2, 0, Math.PI*2);
+        ctx.fill();
+      }
+      const info = `Микроорганизмов: ${microbes.length} | Вы: энергия ${player.energy.toFixed(1)} возраст ${player.age}`;
+      document.getElementById('ui').textContent = info;
+      requestAnimationFrame(step);
+    }
+    step();
+
+    function resize() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+  </script>
+</body>
+</html>

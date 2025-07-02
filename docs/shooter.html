@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simple FPS Shooter</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: sans-serif;
+      background-color: #000;
+      color: white;
+    }
+    canvas { display: block; }
+    #crosshair {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 10px;
+      height: 10px;
+      margin-left: -5px;
+      margin-top: -5px;
+      pointer-events: none;
+    }
+    #crosshair:before, #crosshair:after {
+      content: "";
+      position: absolute;
+      background: white;
+    }
+    #crosshair:before {
+      left: 4px;
+      top: 0;
+      width: 2px;
+      height: 10px;
+    }
+    #crosshair:after {
+      top: 4px;
+      left: 0;
+      width: 10px;
+      height: 2px;
+    }
+    #instructions {
+      position: absolute;
+      top: 50%;
+      width: 100%;
+      text-align: center;
+      font-size: 24px;
+      color: white;
+    }
+  </style>
+</head>
+<body>
+  <div id="instructions">Кликните, чтобы начать</div>
+  <div id="crosshair"></div>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.152.2/build/three.min.js"></script>
+  <script>
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.body.appendChild(renderer.domElement);
+
+    const light = new THREE.DirectionalLight(0xffffff, 1);
+    light.position.set(1, 2, 3);
+    scene.add(light);
+
+    const ambient = new THREE.AmbientLight(0x404040);
+    scene.add(ambient);
+
+    const floorGeo = new THREE.PlaneGeometry(200, 200);
+    const floorMat = new THREE.MeshPhongMaterial({ color: 0x444444 });
+    const floor = new THREE.Mesh(floorGeo, floorMat);
+    floor.rotation.x = -Math.PI / 2;
+    scene.add(floor);
+
+    // Add some boxes as targets
+    const boxMat = new THREE.MeshPhongMaterial({ color: 0x00ff00 });
+    const boxes = [];
+    for (let i = 0; i < 10; i++) {
+      const boxGeo = new THREE.BoxGeometry(2, 2, 2);
+      const box = new THREE.Mesh(boxGeo, boxMat.clone());
+      box.position.set((Math.random() - 0.5) * 50, 1, (Math.random() - 0.5) * 50);
+      scene.add(box);
+      boxes.push(box);
+    }
+
+    const bullets = [];
+    const bulletGeo = new THREE.SphereGeometry(0.1, 8, 8);
+    const bulletMat = new THREE.MeshBasicMaterial({ color: 0xffff00 });
+
+    camera.position.set(0, 1.6, 5);
+
+    // Pointer lock
+    const instructions = document.getElementById('instructions');
+    const crosshair = document.getElementById('crosshair');
+
+    let moveForward = false;
+    let moveBackward = false;
+    let moveLeft = false;
+    let moveRight = false;
+    let canJump = false;
+    const velocity = new THREE.Vector3();
+    const direction = new THREE.Vector3();
+
+    const pointerLockChange = () => {
+      if (document.pointerLockElement === renderer.domElement) {
+        instructions.style.display = 'none';
+        crosshair.style.display = 'block';
+        document.addEventListener('mousemove', onMouseMove, false);
+      } else {
+        instructions.style.display = '';
+        crosshair.style.display = 'none';
+        document.removeEventListener('mousemove', onMouseMove, false);
+      }
+    };
+    document.addEventListener('pointerlockchange', pointerLockChange, false);
+
+    instructions.addEventListener('click', () => {
+      renderer.domElement.requestPointerLock();
+    });
+
+    let yaw = 0, pitch = 0;
+    function onMouseMove(event) {
+      yaw -= event.movementX * 0.002;
+      pitch -= event.movementY * 0.002;
+      pitch = Math.max(-Math.PI/2, Math.min(Math.PI/2, pitch));
+    }
+
+    const onKeyDown = (event) => {
+      switch (event.code) {
+        case 'ArrowUp':
+        case 'KeyW': moveForward = true; break;
+        case 'ArrowLeft':
+        case 'KeyA': moveLeft = true; break;
+        case 'ArrowDown':
+        case 'KeyS': moveBackward = true; break;
+        case 'ArrowRight':
+        case 'KeyD': moveRight = true; break;
+        case 'Space': if (canJump) velocity.y += 5; canJump = false; break;
+      }
+    };
+    const onKeyUp = (event) => {
+      switch (event.code) {
+        case 'ArrowUp':
+        case 'KeyW': moveForward = false; break;
+        case 'ArrowLeft':
+        case 'KeyA': moveLeft = false; break;
+        case 'ArrowDown':
+        case 'KeyS': moveBackward = false; break;
+        case 'ArrowRight':
+        case 'KeyD': moveRight = false; break;
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    document.addEventListener('keyup', onKeyUp);
+
+    document.addEventListener('mousedown', () => {
+      if (document.pointerLockElement === renderer.domElement) {
+        const bullet = new THREE.Mesh(bulletGeo, bulletMat.clone());
+        const dir = new THREE.Vector3();
+        camera.getWorldDirection(dir);
+        bullet.position.copy(camera.position);
+        bullet.quaternion.copy(camera.quaternion);
+        bullet.userData.velocity = dir.clone().multiplyScalar(50);
+        bullets.push(bullet);
+        scene.add(bullet);
+      }
+    });
+
+    const clock = new THREE.Clock();
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const delta = clock.getDelta();
+
+      velocity.x -= velocity.x * 10.0 * delta;
+      velocity.z -= velocity.z * 10.0 * delta;
+      velocity.y -= 9.8 * 5.0 * delta; // gravity
+
+      direction.z = Number(moveForward) - Number(moveBackward);
+      direction.x = Number(moveRight) - Number(moveLeft);
+      direction.normalize();
+
+      if (moveForward || moveBackward) velocity.z -= direction.z * 40.0 * delta;
+      if (moveLeft || moveRight) velocity.x -= direction.x * 40.0 * delta;
+
+      camera.rotation.order = 'YXZ';
+      camera.rotation.y = yaw;
+      camera.rotation.x = pitch;
+
+      camera.position.addScaledVector(velocity, delta);
+      if (camera.position.y < 1.6) {
+        velocity.y = 0;
+        camera.position.y = 1.6;
+        canJump = true;
+      }
+
+      // Update bullets
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const b = bullets[i];
+        b.position.addScaledVector(b.userData.velocity, delta);
+        // remove bullet after some distance
+        if (b.position.distanceTo(camera.position) > 100) {
+          scene.remove(b);
+          bullets.splice(i, 1);
+          continue;
+        }
+        // check collision with boxes
+        for (let j = 0; j < boxes.length; j++) {
+          const box = boxes[j];
+          if (!box.userData.hit && b.position.distanceTo(box.position) < 1) {
+            box.material.color.set(0xff0000);
+            box.userData.hit = true;
+            scene.remove(b);
+            bullets.splice(i, 1);
+            break;
+          }
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+  </script>
+</body>
+</html>
