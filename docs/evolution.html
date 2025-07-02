@@ -31,6 +31,7 @@
 <body>
   <canvas id="world"></canvas>
   <div id="ui"></div>
+  <div id="help" style="position:absolute;bottom:10px;left:10px;background:rgba(0,0,0,0.5);padding:4px 8px;border-radius:4px;font-size:14px">WASD/стрелки – движение</div>
   <script>
     const canvas = document.getElementById('world');
     const ctx = canvas.getContext('2d');
@@ -39,10 +40,14 @@
 
     const microbes = [];
     const foods = [];
+    let player;
+    const keys = {};
+    document.addEventListener('keydown', e => keys[e.code] = true);
+    document.addEventListener('keyup', e => keys[e.code] = false);
 
     function rand(min, max) { return Math.random() * (max - min) + min; }
 
-    class Microbe {
+class Microbe {
       constructor(x, y) {
         this.x = x;
         this.y = y;
@@ -60,7 +65,7 @@
         this.y += this.dy;
         if (this.x < 0 || this.x > canvas.width) this.dx *= -1;
         if (this.y < 0 || this.y > canvas.height) this.dy *= -1;
-        this.energy -= 0.01;
+        this.energy -= 0.02 * (Math.abs(this.dx) + Math.abs(this.dy));
         this.age += 1;
         // seek food
         for (const f of foods) {
@@ -74,7 +79,8 @@
         if (this.energy > 40) {
           this.energy /= 2;
           const child = new Microbe(this.x + rand(-10,10), this.y + rand(-10,10));
-          child.color = this.color; // inherit
+          const hue = (parseInt(this.color.match(/hsl\((\d+)/)[1]) + rand(-20,20) + 360) % 360;
+          child.color = `hsl(${hue},70%,60%)`;
           child.dx = rand(-1,1);
           child.dy = rand(-1,1);
           microbes.push(child);
@@ -84,6 +90,9 @@
           this.multicell = true;
           this.size = 10;
           this.color = 'white';
+        }
+        if (this.energy <= 0 || this.age > 1000) {
+          microbes.splice(microbes.indexOf(this), 1);
         }
       }
 
@@ -95,11 +104,27 @@
       }
     }
 
+class Player extends Microbe {
+      constructor(x, y) {
+        super(x, y);
+        this.color = '#ff0';
+      }
+      step() {
+        if (keys['ArrowUp'] || keys['KeyW']) this.dy -= 0.1;
+        if (keys['ArrowDown'] || keys['KeyS']) this.dy += 0.1;
+        if (keys['ArrowLeft'] || keys['KeyA']) this.dx -= 0.1;
+        if (keys['ArrowRight'] || keys['KeyD']) this.dx += 0.1;
+        super.step();
+      }
+    }
+
     function spawnFood() {
       foods.push({x: rand(0, canvas.width), y: rand(0, canvas.height)});
     }
 
-    for (let i = 0; i < 5; i++) microbes.push(new Microbe(rand(0, canvas.width), rand(0, canvas.height)));
+    player = new Player(canvas.width/2, canvas.height/2);
+    microbes.push(player);
+    for (let i = 0; i < 4; i++) microbes.push(new Microbe(rand(0, canvas.width), rand(0, canvas.height)));
     for (let i = 0; i < 20; i++) spawnFood();
 
     function step() {
@@ -114,7 +139,8 @@
         ctx.arc(f.x, f.y, 2, 0, Math.PI*2);
         ctx.fill();
       }
-      document.getElementById('ui').textContent = `Микроорганизмов: ${microbes.length}`;
+      const info = `Микроорганизмов: ${microbes.length} | Вы: энергия ${player.energy.toFixed(1)} возраст ${player.age}`;
+      document.getElementById('ui').textContent = info;
       requestAnimationFrame(step);
     }
     step();
