@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Mini Minecraft</title>
+  <style>
+    body { margin: 0; overflow: hidden; background: #bfd1e5; font-family: sans-serif; }
+    canvas { display: block; }
+    #blocker {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+    }
+    #instructions {
+      width: 100%;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      text-align: center;
+      color: white;
+      cursor: pointer;
+    }
+    #crosshair {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 10px;
+      height: 10px;
+      margin-left: -5px;
+      margin-top: -5px;
+      pointer-events: none;
+    }
+    #crosshair:before, #crosshair:after {
+      content: "";
+      position: absolute;
+      background: white;
+    }
+    #crosshair:before { left: 4px; top: 0; width: 2px; height: 10px; }
+    #crosshair:after { top: 4px; left: 0; width: 10px; height: 2px; }
+  </style>
+</head>
+<body>
+  <div id="blocker">
+    <div id="instructions">
+      <p style="font-size:32px">Кликните, чтобы начать</p>
+      <p>Движение: WASD<br>Прыжок: SPACE<br>Взгляд: мышь</p>
+    </div>
+  </div>
+  <div id="crosshair"></div>
+  <script type="module">
+    import * as THREE from 'https://unpkg.com/three@0.160.0/build/three.module.js';
+    import { PointerLockControls } from 'https://unpkg.com/three@0.160.0/examples/jsm/controls/PointerLockControls.js';
+    import { ImprovedNoise } from 'https://unpkg.com/three@0.160.0/examples/jsm/math/ImprovedNoise.js';
+    import * as BufferGeometryUtils from 'https://unpkg.com/three@0.160.0/examples/jsm/utils/BufferGeometryUtils.js';
+
+    let camera, scene, renderer, controls;
+    const worldWidth = 64, worldDepth = 64;
+    const worldHalfWidth = worldWidth / 2;
+    const worldHalfDepth = worldDepth / 2;
+    const data = generateHeight(worldWidth, worldDepth);
+
+    let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false, canJump = false;
+    const velocity = new THREE.Vector3();
+    const direction = new THREE.Vector3();
+    let prevTime = performance.now();
+
+    init();
+    animate();
+
+    function init() {
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0xbfd1e5);
+
+      camera = new THREE.PerspectiveCamera(60, window.innerWidth / window.innerHeight, 1, 2000);
+      camera.position.y = getY(worldHalfWidth, worldHalfDepth) + 2;
+
+      const matrix = new THREE.Matrix4();
+
+      const pxGeometry = new THREE.PlaneGeometry(1, 1);
+      pxGeometry.attributes.uv.array[1] = 0.5;
+      pxGeometry.attributes.uv.array[3] = 0.5;
+      pxGeometry.rotateY(Math.PI / 2);
+      pxGeometry.translate(0.5, 0, 0);
+
+      const nxGeometry = new THREE.PlaneGeometry(1, 1);
+      nxGeometry.attributes.uv.array[1] = 0.5;
+      nxGeometry.attributes.uv.array[3] = 0.5;
+      nxGeometry.rotateY(-Math.PI / 2);
+      nxGeometry.translate(-0.5, 0, 0);
+
+      const pyGeometry = new THREE.PlaneGeometry(1, 1);
+      pyGeometry.attributes.uv.array[5] = 0.5;
+      pyGeometry.attributes.uv.array[7] = 0.5;
+      pyGeometry.rotateX(-Math.PI / 2);
+      pyGeometry.translate(0, 0.5, 0);
+
+      const pzGeometry = new THREE.PlaneGeometry(1, 1);
+      pzGeometry.attributes.uv.array[1] = 0.5;
+      pzGeometry.attributes.uv.array[3] = 0.5;
+      pzGeometry.translate(0, 0, 0.5);
+
+      const nzGeometry = new THREE.PlaneGeometry(1, 1);
+      nzGeometry.attributes.uv.array[1] = 0.5;
+      nzGeometry.attributes.uv.array[3] = 0.5;
+      nzGeometry.rotateY(Math.PI);
+      nzGeometry.translate(0, 0, -0.5);
+
+      const geometries = [];
+      for (let z = 0; z < worldDepth; z++) {
+        for (let x = 0; x < worldWidth; x++) {
+          const h = getY(x, z);
+          matrix.makeTranslation(x - worldHalfWidth, h, z - worldHalfDepth);
+
+          const px = getY(x + 1, z);
+          const nx = getY(x - 1, z);
+          const pz = getY(x, z + 1);
+          const nz = getY(x, z - 1);
+
+          geometries.push(pyGeometry.clone().applyMatrix4(matrix));
+          if ((px !== h && px !== h + 1) || x === 0) geometries.push(pxGeometry.clone().applyMatrix4(matrix));
+          if ((nx !== h && nx !== h + 1) || x === worldWidth - 1) geometries.push(nxGeometry.clone().applyMatrix4(matrix));
+          if ((pz !== h && pz !== h + 1) || z === worldDepth - 1) geometries.push(pzGeometry.clone().applyMatrix4(matrix));
+          if ((nz !== h && nz !== h + 1) || z === 0) geometries.push(nzGeometry.clone().applyMatrix4(matrix));
+        }
+      }
+      const geometry = BufferGeometryUtils.mergeGeometries(geometries);
+      geometry.computeBoundingSphere();
+
+      const texture = new THREE.TextureLoader().load('https://threejs.org/examples/textures/minecraft/atlas.png');
+      texture.magFilter = THREE.NearestFilter;
+
+      const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ map: texture, side: THREE.DoubleSide }));
+      scene.add(mesh);
+
+      const ambientLight = new THREE.AmbientLight(0xeeeeee, 3);
+      scene.add(ambientLight);
+
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 2);
+      directionalLight.position.set(1, 1, 0.5).normalize();
+      scene.add(directionalLight);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(window.devicePixelRatio);
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      document.body.appendChild(renderer.domElement);
+
+      controls = new PointerLockControls(camera, renderer.domElement);
+      document.getElementById('instructions').addEventListener('click', () => controls.lock());
+      controls.addEventListener('lock', () => {
+        document.getElementById('blocker').style.display = 'none';
+      });
+      controls.addEventListener('unlock', () => {
+        document.getElementById('blocker').style.display = '';
+      });
+      scene.add(controls.getObject());
+
+      document.addEventListener('keydown', onKeyDown);
+      document.addEventListener('keyup', onKeyUp);
+      window.addEventListener('resize', onWindowResize);
+    }
+
+    function onWindowResize() {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+
+    function onKeyDown(event) {
+      switch (event.code) {
+        case 'ArrowUp':
+        case 'KeyW': moveForward = true; break;
+        case 'ArrowLeft':
+        case 'KeyA': moveLeft = true; break;
+        case 'ArrowDown':
+        case 'KeyS': moveBackward = true; break;
+        case 'ArrowRight':
+        case 'KeyD': moveRight = true; break;
+        case 'Space':
+          if (canJump === true) velocity.y += 5;
+          canJump = false;
+          break;
+      }
+    }
+
+    function onKeyUp(event) {
+      switch (event.code) {
+        case 'ArrowUp':
+        case 'KeyW': moveForward = false; break;
+        case 'ArrowLeft':
+        case 'KeyA': moveLeft = false; break;
+        case 'ArrowDown':
+        case 'KeyS': moveBackward = false; break;
+        case 'ArrowRight':
+        case 'KeyD': moveRight = false; break;
+      }
+    }
+
+    function generateHeight(width, height) {
+      const data = [], perlin = new ImprovedNoise(), size = width * height, z = Math.random() * 100;
+      let quality = 2;
+      for (let j = 0; j < 4; j++) {
+        if (j === 0) for (let i = 0; i < size; i++) data[i] = 0;
+        for (let i = 0; i < size; i++) {
+          const x = i % width, y = (i / width) | 0;
+          data[i] += perlin.noise(x / quality, y / quality, z) * quality;
+        }
+        quality *= 4;
+      }
+      return data;
+    }
+
+    function getY(x, z) {
+      return (data[x + z * worldWidth] * 0.15) | 0;
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      const time = performance.now();
+      if (controls.isLocked) {
+        const delta = (time - prevTime) / 1000;
+        velocity.x -= velocity.x * 10.0 * delta;
+        velocity.z -= velocity.z * 10.0 * delta;
+        velocity.y -= 9.8 * delta;
+
+        direction.z = Number(moveForward) - Number(moveBackward);
+        direction.x = Number(moveRight) - Number(moveLeft);
+        direction.normalize();
+
+        if (moveForward || moveBackward) velocity.z -= direction.z * 20.0 * delta;
+        if (moveLeft || moveRight) velocity.x -= direction.x * 20.0 * delta;
+
+        controls.moveRight(-velocity.x * delta);
+        controls.moveForward(-velocity.z * delta);
+
+        controls.getObject().position.y += velocity.y * delta;
+        if (controls.getObject().position.y < getY(worldHalfWidth, worldHalfDepth) + 2) {
+          velocity.y = 0;
+          controls.getObject().position.y = getY(worldHalfWidth, worldHalfDepth) + 2;
+          canJump = true;
+        }
+      }
+
+      prevTime = time;
+      renderer.render(scene, camera);
+    }
+  </script>
+</body>
+</html>
